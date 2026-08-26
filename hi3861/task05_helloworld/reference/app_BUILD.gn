@@ -1,0 +1,6 @@
+import("//build/lite/config/component/lite_component.gni")
+lite_component("app") {
+    features = [
+        "1.0_Hello_World:hello_world",
+    ]
+}
