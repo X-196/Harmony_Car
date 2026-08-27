@@ -8,6 +8,7 @@
 |---|---|---|---|
 | 任务5 | `task05_helloworld/` | OpenHarmony 第一个程序 Hello World（双任务串口打印）| ✅ 编译 + 实机烧录成功 |
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
+| 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | 🚧 源码完成，编译/烧录待虚拟机验证 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
 
@@ -25,6 +26,15 @@
 
 - 关键点：SG90 信号线接 GPIO2；20ms 周期、0.5~2.5ms 高电平控制角度（1.0ms=45°、1.5ms=90°、2.0ms=135°）；`osMutexNew/Acquire/Release` 实现互斥，三任务同优先级、用 `osDelay` 错开时序。
 - 详见 [`task07_sg90_mutex/README.md`](task07_sg90_mutex/README.md)。
+
+## 任务8：OpenHarmony 系统驱动实验（GPIO 驱动超声波 + 软件定时器）
+
+在 Hi3861 上用 **GPIO 驱动 HC-SR04 超声波测距模块**，结合 **系统 Tick** 完成定时测距。U+ 任务8【学生需要完成内容】：创建 **2 个软件定时器**——定时器1 控制超声波 **3 秒**间隔测一次距离，定时器2 控制打印当前 **tick 值**。
+
+**成果**：🚧 源码完成（`osTimerNew` 创建 2 个软件定时器：3s 测距 + 1s 打印 tick），编译/烧录待虚拟机验证。
+
+- 关键点：HC-SR04 接 GPIO7(TRIG)/GPIO8(ECHO)；`hi_get_us()` 计时高电平时长→`distance=time*0.034/2`；`osTimerNew/osTimerStart` 创建软件定时器，tick 频率 100Hz（1tick=10ms，3s=300、1s=100）；`hi_get_tick()` 读系统 tick 值。
+- 详见 [`task08_hcsr04_tick/README.md`](task08_hcsr04_tick/README.md)。
 
 ## 通用编译方法（Ubuntu 虚拟机）
 

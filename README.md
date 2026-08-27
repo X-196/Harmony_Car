@@ -8,7 +8,7 @@
 - **核心硬件**：Hi3861（OpenHarmony 主控）+ STM32F103（外设与电机控制）
 - **开发方式**：Hi3861 侧在 Ubuntu 虚拟机中基于 OpenHarmony 源码编译，通过 HiBurn 烧录；STM32 侧使用 Keil MDK5 开发，通过 SWD 下载
 - **当前进度**：
-  - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 7 完成（共 10 个任务）
+  - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 7 完成，任务 8 源码完成（编译/烧录待虚拟机验证）（共 10 个任务）
   - 阶段三（STM32）：任务 19（串口收发 + WS2812 炫彩灯）、任务 21（PWM 驱动电机）、任务 22（TIMER 编码器测速）、任务 23（PID 电机速度闭环控制）完成
 
 ## 项目结构
@@ -23,9 +23,13 @@ Harmony_Car/
 │   ├── task05_helloworld/   # 任务5：OpenHarmony 系统调试实验（Hello World）
 │   │   ├── 1.0_Hello_World/ # 双任务 HelloWorld 工程（hello_world.c + BUILD.gn）
 │   │   └── reference/       # 编译环境参考配置（BUILD.gn、config.ini 等）
-│   └── task07_sg90_mutex/   # 任务7：GPIO 驱动舵机（SG90 + 互斥锁多任务）
-│       ├── 3.0_SG90_Mutex/      # U+ 参考源程序
-│       ├── student_3.0_SG90_Mutex/  # 学生完成版（最终烧录跑通）
+│   ├── task07_sg90_mutex/   # 任务7：GPIO 驱动舵机（SG90 + 互斥锁多任务）
+│   │   ├── 3.0_SG90_Mutex/      # U+ 参考源程序
+│   │   ├── student_3.0_SG90_Mutex/  # 学生完成版（最终烧录跑通）
+│   │   └── reference/       # app/BUILD.gn 参考
+│   └── task08_hcsr04_tick/  # 任务8：GPIO 驱动超声波（HC-SR04 + 软件定时器）
+│       ├── 4.0_Hcsr04_Tick/      # U+ 参考源程序
+│       ├── student_4.0_Hcsr04_Tick/  # 学生完成版（2 个软件定时器）
 │       └── reference/       # app/BUILD.gn 参考
 └── stm32/                   # STM32 侧 Keil MDK5 工程
     ├── 02_串口收发打印/      # 任务19：串口收发 + WS2812 炫彩灯效果
@@ -79,6 +83,11 @@ Harmony_Car/
   - 用 `osMutex` 互斥锁实现**同优先级**三任务对舵机的串行化访问，`osDelay` 错开时序
   - 串口依次输出「任务1/3/2开始运行」，舵机按**左转 45° → 右转 45° → 居中**循环动作
   - 已完成 **编译成功（`BUILD SUCCESS`）+ 实机烧录成功**
+- **任务8 · task08_hcsr04_tick**：OpenHarmony 系统驱动实验（GPIO 驱动超声波 + 软件定时器）
+  - HC-SR04 超声波接 GPIO7(TRIG)/GPIO8(ECHO)；`hi_get_us()` 计时高电平→`distance=time*0.034/2`
+  - 创建 **2 个软件定时器**：定时器1 每 3s 测距一次，定时器2 每 1s 打印当前 `hi_get_tick()` 值
+  - tick 频率 100Hz（1tick=10ms）：`osTimerStart(..., 300)`=3s、`(...,100)`=1s
+  - 🚧 源码完成（编译/烧录待虚拟机验证）
 
 ## 环境与工具链
 
@@ -105,11 +114,12 @@ Harmony_Car/
 
 1. 虚拟机中进入 OpenHarmony 源码，执行 `python3 build.py wifiiot` 编译；
 2. 用 HiBurn 选择 `Hi3861_wifiiot_app_allinone.bin` 烧录（COM9、2000000、Auto burn）；
-3. 串口助手（115200）观察输出（任务5：`Hello World!` / `Hello QST!`；任务7：任务1/3/2 运行日志 + 舵机动作）。
+3. 串口助手（115200）观察输出（任务5：`Hello World!` / `Hello QST!`；任务7：任务1/3/2 运行日志 + 舵机动作；任务8：每 3s 一条 `distance is X.X (cm)` + 每 1s 一条 `tick value is N`）。
 
 > 详细步骤与踩坑记录见各子目录 README：
-> - [`hi3861/README.md`](hi3861/README.md) —— Hi3861 模块总览（任务5 编译 / 烧录 / 踩坑，任务7 舵机 + 互斥锁）
+> - [`hi3861/README.md`](hi3861/README.md) —— Hi3861 模块总览（任务5 编译 / 烧录 / 踩坑，任务7 舵机 + 互斥锁，任务8 超声波 + 软件定时器）
 > - [`hi3861/task07_sg90_mutex/README.md`](hi3861/task07_sg90_mutex/README.md) —— 任务7 GPIO 驱动舵机 + 互斥锁
+> - [`hi3861/task08_hcsr04_tick/README.md`](hi3861/task08_hcsr04_tick/README.md) —— 任务8 GPIO 驱动超声波 + 软件定时器
 > - [`stm32/README.md`](stm32/README.md) —— STM32 任务19 串口 + 炫彩灯
 > - [`stm32/4_PWM驱动电机/README.md`](stm32/4_PWM驱动电机/README.md) —— 任务21 PWM 驱动电机
 > - [`stm32/5_Timer编码器测速/README.md`](stm32/5_Timer编码器测速/README.md) —— 任务22 TIMER 编码器测速
@@ -124,5 +134,5 @@ Harmony_Car/
 
 ## 后续计划
 
-- 阶段一剩余任务（当前进度 4/10）：任务6、8、9、10 —— 红外对管收发、GPIO 驱动超声波、UART 信息收发、阶段综合实验
+- 阶段一剩余任务：任务6、9、10 —— 红外对管收发、UART 信息收发、阶段综合实验（任务8 已完成源码）
 - 阶段三任务 22（TIMER 编码器测速）、任务 23（PID 电机速度闭环控制）已完成 | 剩下 24~28：更多传感器与运动控制
