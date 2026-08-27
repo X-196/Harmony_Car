@@ -1,0 +1,8 @@
+# Hi3861 编译/烧录产物（本地验证用，不入库）
+hi3861/task*/output/
+hi3861/task*/*.bin
+
+# Keil 编译中间产物
+stm32/**/OBJ/
+stm32/**/Listing/
+stm32/**/Output/

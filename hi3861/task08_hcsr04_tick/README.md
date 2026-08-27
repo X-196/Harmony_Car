@@ -87,10 +87,11 @@ python3 build.py wifiiot
 
 ## 实测结果
 
-- 编译：`python3 build.py wifiiot` → `BUILD SUCCESS`；
-- 产物：`Hi3861_wifiiot_app_allinone.bin`；
-- 烧录：HiBurn 烧录成功；// 待验证（需要 Ubuntu 虚拟机 + 开发板）
-- 运行现象：串口每 3s 打印一次 `distance is X.X (cm)`，每 1s 打印一次 `tick value is N`。
+- 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，student 版已确认编译并链接 `-lHcsr04`）；
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**778472 字节**）；
+- 服务端产物已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `132839df795e177894da30601b0d40a4`，供 HiBurn 烧录）；
+- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键进入下载模式）；
+- 运行现象（预期）：串口每 3s 打印一次 `distance is X.X (cm)`，每 1s 打印一次 `tick value is N`。
 
 ## 踩坑记录
 
