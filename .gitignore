@@ -1,8 +1,30 @@
-# Hi3861 编译/烧录产物（本地验证用，不入库）
+# carProject 仓库：只跟踪 README/diary/hi3861/stm32；其余本地资源/配置/编译产物不入库
+
+# 本地资源与工具（体积大，不入库）
+/tools/
+/docs/
+/.reasonix/
+/reasonix.toml
+
+# 本地备份/压缩包
+*.zip
+*.tar.gz
+
+# Hi3861 编译/烧录产物与临时
 hi3861/task*/output/
 hi3861/task*/*.bin
+hi3861/.tmp_cdp/
+hi3861/task05_helloworld/burn_extra_bak/
 
-# Keil 编译中间产物
-stm32/**/OBJ/
-stm32/**/Listing/
-stm32/**/Output/
+# STM32 Keil 编译中间产物 + 原始压缩包备份
+**/OBJ/
+**/Listings/
+**/Output/
+**/*.uvguix.*
+**/*.uvoptx
+**/*.axf
+stm32/*.rar
+
+# 本地未随仓库发布的工作工程（仅本地保留，不入库）
+stm32/01_工程模板_*/
+stm32/7_NFC读卡/
