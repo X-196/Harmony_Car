@@ -70,12 +70,12 @@ void SSD1306_ShowStr(uint8_t x, uint8_t y, uint8_t ch[], uint8_t TextSize);
 void SSD1306_DrawBMP(uint8_t x0, uint8_t y0,uint8_t x1, uint8_t y1,uint8_t BMP[]);
 
 /**
- * @brief  显示16x16中文字符串（UTF-8）
- * @param  x: X轴列坐标 0~112
- * @param  y: 行号 0~3（每行16px，占2页）
- * @param  str: 中文字符串（UTF-8，仅支持 HZ16Char 中的字）
+ * @brief  显示24x24中文字符串（UTF-8，大字号）
+ * @param  x: X轴列坐标 0~104
+ * @param  y: 起始页（0~5；用于垂直定位，如居中取 2）
+ * @param  str: 中文字符串（UTF-8，仅支持 HZ24Char 中的字）
  * @retval None
  */
-void SSD1306_ShowChinese(uint8_t x, uint8_t y, uint8_t *str);
+void SSD1306_ShowChinese24(uint8_t x, uint8_t y, uint8_t *str);
 
 #endif

@@ -255,41 +255,44 @@ void SSD1306_DrawBMP(uint8_t x0, uint8_t y0,uint8_t x1, uint8_t y1,uint8_t BMP[]
 } 
 
 /**
- * @brief  显示16x16中文字符串（UTF-8）
- * @param  x: X轴列坐标 0~112
- * @param  y: 行号 0~3（每行16px，占2页）
- * @param  str: 中文字符串（UTF-8，仅支持 HZ16Char 中的字）
+ * @brief  显示24x24中文字符串（UTF-8，大字号）
+ * @param  x: X轴列坐标 0~104
+ * @param  y: 起始页（0~5；用于垂直定位，如居中取 2）
+ * @param  str: 中文字符串（UTF-8，仅支持 HZ24Char 中的字）
  * @retval None
  */
-void SSD1306_ShowChinese(uint8_t x, uint8_t y, uint8_t *str)
+void SSD1306_ShowChinese24(uint8_t x, uint8_t y, uint8_t *str)
 {
-    uint8_t page = y * 2;
     uint8_t i = 0, idx = 0;
-    while (*str && x <= 112)
+    while (*str && x <= 104)
     {
         // 在字库表中匹配当前汉字（UTF-8 3 字节）
-        for (i = 0; i < sizeof(HZ16Char) / sizeof(HZ16Char[0]); i++)
+        for (i = 0; i < sizeof(HZ24Char) / sizeof(HZ24Char[0]); i++)
         {
-            if (str[0] == HZ16Char[i][0] &&
-                str[1] == HZ16Char[i][1] &&
-                str[2] == HZ16Char[i][2])
+            if (str[0] == HZ24Char[i][0] &&
+                str[1] == HZ24Char[i][1] &&
+                str[2] == HZ24Char[i][2])
             {
                 idx = i;
                 break;
             }
         }
         // 只显示匹配到的字（未收录的字跳过）
-        if (i < sizeof(HZ16Char) / sizeof(HZ16Char[0]))
+        if (i < sizeof(HZ24Char) / sizeof(HZ24Char[0]))
         {
-            // 上页（行0~7）：16 列
-            SSD1306_SetPos(x, page);
-            for (i = 0; i < 16; i++)
-                SSD1306_WiteData(HZ16[idx][i]);
-            // 下页（行8~15）：16 列
-            SSD1306_SetPos(x, page + 1);
-            for (i = 0; i < 16; i++)
-                SSD1306_WiteData(HZ16[idx][16 + i]);
-            x += 16;
+            // 页0（行0~7）：24 列
+            SSD1306_SetPos(x, y);
+            for (i = 0; i < 24; i++)
+                SSD1306_WiteData(HZ24[idx][i]);
+            // 页1（行8~15）：24 列
+            SSD1306_SetPos(x, y + 1);
+            for (i = 0; i < 24; i++)
+                SSD1306_WiteData(HZ24[idx][24 + i]);
+            // 页2（行16~23）：24 列
+            SSD1306_SetPos(x, y + 2);
+            for (i = 0; i < 24; i++)
+                SSD1306_WiteData(HZ24[idx][48 + i]);
+            x += 24;
         }
         str += 3;
     }
