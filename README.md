@@ -107,7 +107,7 @@ Harmony_Car/
 - **任务9 · task09_uart_ble**：OpenHarmony 系统驱动实验（UART 信息收发 + 消息队列 + 蓝牙）
   - 串口 UART1（GPIO0=TX、GPIO1=RX，9600/8N1）；`UartInit/Read/Write`；蓝牙 JDY-16 透传接 UART1
   - `osMessageQueueNew/Put/Get`：生产者 thread2 放 5 条消息+串口数据，消费者 UART_Task **依次读出**（FIFO）
-  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
+  - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录运行成功**（消息队列多发多读 + 蓝牙收发）
 - **任务11 · task11_i2c_ssd1306**：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
   - IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`
   - 学生版新增 **16×16 中文字库** + `SSD1306_ShowChinese()` 显示 **"鸿蒙先锋号"**（参考版字库只有 ASCII）
