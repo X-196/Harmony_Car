@@ -8,7 +8,7 @@
 - **核心硬件**：Hi3861（OpenHarmony 主控）+ STM32F103（外设与电机控制）
 - **开发方式**：Hi3861 侧在 Ubuntu 虚拟机中基于 OpenHarmony 源码编译，通过 HiBurn 烧录；STM32 侧使用 Keil MDK5 开发，通过 SWD 下载
 - **当前进度**：
-  - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 6 / 7 / 8 / 9 完成（共 10 个任务）
+  - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 6 / 7 / 8 / 9 / 10 完成（共 10 个任务）
   - 阶段二（OpenHarmony / Hi3861）：任务 11 完成（I2C OLED 显示）
   - 阶段三（STM32）：任务 19（串口收发 + WS2812 炫彩灯）、任务 21（PWM 驱动电机）、任务 22（TIMER 编码器测速）、任务 23（PID 电机速度闭环控制）完成
 
@@ -38,6 +38,9 @@ Harmony_Car/
 │   ├── task09_uart_ble/    # 任务9：UART 信息收发（消息队列 + 蓝牙 JDY-16）
 │   │   ├── 5.0_Uart_BLE/        # U+ 参考源程序
 │   │   ├── student_5.0_Uart_BLE/  # 学生完成版（消息队列多发多读）
+│   │   └── reference/       # app/BUILD.gn 参考
+│   ├── task10_sum_experiment/  # 任务10：第一阶段综合实验（舵机/超声波/红外/蓝牙/消息队列）
+│   │   ├── 6.0_Sum_Experiment_First/   # 综合实验1 工程
 │   │   └── reference/       # app/BUILD.gn 参考
 │   └── task11_i2c_ssd1306/  # 任务11：I2C 驱动 OLED（SSD1306）显示字符串
 │       ├── 7.0_I2c_Ssd1306/      # U+ 参考源程序
@@ -108,6 +111,10 @@ Harmony_Car/
   - 串口 UART1（GPIO0=TX、GPIO1=RX，9600/8N1）；`UartInit/Read/Write`；蓝牙 JDY-16 透传接 UART1
   - `osMessageQueueNew/Put/Get`：生产者 thread2 放 5 条消息+串口数据，消费者 UART_Task **依次读出**（FIFO）
   - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录运行成功**（消息队列多发多读 + 蓝牙收发）
+- **任务10 · task10_sum_experiment**：第一阶段综合实验（多模块联动）
+  - task1 舵机(GPIO2)左右旋转 + 超声波(GPIO7/8)测距；task2 前15s 红外(GPIO13/14)寻线、15s 后蓝牙(UART1/9600)；task3 消息队列多发多读
+  - 15s 用 `hi_get_tick()`(100Hz)=1500 tick；三任务同优先级 25 时间片调度
+  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
 - **任务11 · task11_i2c_ssd1306**：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
   - IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`
   - 学生版新增 **16×16 中文字库** + `SSD1306_ShowChinese()` 显示 **"鸿蒙先锋号"**（参考版字库只有 ASCII）
@@ -146,6 +153,7 @@ Harmony_Car/
 > - [`hi3861/task07_sg90_mutex/README.md`](hi3861/task07_sg90_mutex/README.md) —— 任务7 GPIO 驱动舵机 + 互斥锁
 > - [`hi3861/task08_hcsr04_tick/README.md`](hi3861/task08_hcsr04_tick/README.md) —— 任务8 GPIO 驱动超声波 + 软件定时器
 > - [`hi3861/task09_uart_ble/README.md`](hi3861/task09_uart_ble/README.md) —— 任务9 UART 信息收发 + 消息队列
+> - [`hi3861/task10_sum_experiment/README.md`](hi3861/task10_sum_experiment/README.md) —— 任务10 第一阶段综合实验
 > - [`hi3861/task11_i2c_ssd1306/README.md`](hi3861/task11_i2c_ssd1306/README.md) —— 任务11 I2C 驱动 OLED 显示字符串
 > - [`stm32/README.md`](stm32/README.md) —— STM32 任务19 串口 + 炫彩灯
 > - [`stm32/4_PWM驱动电机/README.md`](stm32/4_PWM驱动电机/README.md) —— 任务21 PWM 驱动电机

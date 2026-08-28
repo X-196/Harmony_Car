@@ -11,6 +11,7 @@
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
 | 任务9 | `task09_uart_ble/` | UART 信息收发（消息队列 + 蓝牙 JDY-16） | ✅ 编译 + 实机烧录成功 |
+| 任务10 | `task10_sum_experiment/` | 第一阶段综合实验（舵机+超声波+红外+蓝牙+消息队列） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
@@ -56,6 +57,15 @@
 
 - 关键点：串口 **UART1**（GPIO0=TX、GPIO1=RX，9600/8N1）；`UartInit/Read/Write`；`osMessageQueueNew/Put/Get`（生产者 thread2 放 5 条消息+串口数据，消费者 UART_Task 依次读出）；蓝牙 JDY-16 透传接 UART1。
 - 详见 [`task09_uart_ble/README.md`](task09_uart_ble/README.md)。
+
+## 任务10：第一阶段综合实验（多模块联动）
+
+综合**舵机测距 + 红外寻线/蓝牙 + 消息队列**，完成第一阶段综合实验。U+ 任务10 只有任务描述（无分步指导），按描述综合实现。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（task1 舵机左右测距、task2 前15s 红外寻线/后蓝牙、task3 消息队列多发多读，三任务 RTOS 调度），烧录待实机。
+
+- 关键点：舵机 GPIO2、超声波 GPIO7/8、红外 GPIO13/14、蓝牙+UART1 GPIO0/1(9600)+消息队列；15s 用 `hi_get_tick()`(100Hz)=1500 tick；三任务同优先级 25 时间片调度。
+- 详见 [`task10_sum_experiment/README.md`](task10_sum_experiment/README.md)。
 
 ## 任务11：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
 
