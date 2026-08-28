@@ -65,6 +65,10 @@ python3 build.py wifiiot
 
 > 编译前确认 `applications/sample/wifi-iot/app/BUILD.gn` 中 `features` 指向 `student_7.0_I2c_Ssd1306:I2c_Ssd1306`（见 `reference/app_BUILD.gn`）。
 
+> ⚠️ **关键：必须先启用 I2C 驱动**，否则链接报 `undefined reference to hi_i2c_write/init/set_baudrate`。在虚拟机 OpenHarmony 源码里把
+> `vendor/hisi/hi3861/hi3861/build/config/usr_config.mk` 中的 `# CONFIG_I2C_SUPPORT is not set` 改为 `CONFIG_I2C_SUPPORT=y`
+> （`build/make_scripts/config.mk` 与 `platform/drivers/module_config.mk` 都据此把 I2C 驱动编进 `libdrv`）。
+
 编译产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（烧录用，多 bin 合并包）。
 
 ## 烧录方法（Windows + HiBurn）
@@ -77,13 +81,15 @@ python3 build.py wifiiot
 
 ## 实测结果
 
-- 编译：`python3 build.py wifiiot` → `BUILD SUCCESS`；
-- 烧录：HiBurn 烧录成功；
-- 现象：OLED 上居中显示 **"鸿蒙先锋号"** 五个汉字。
+- 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，student 版已编译链接 `-lI2c_Ssd1306`）；
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**780744 字节**），已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `de8eaee2c52c2595e511e746d88542c9`）；
+- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
+- 现象（预期）：OLED 上居中显示 **"鸿蒙先锋号"** 五个汉字。
 
 ## 踩坑记录
 
 - **必须烧 `allinone.bin`**：`_burn.bin` 缺少元数据，HiBurn 握手失败报 `Wait SELoadr ACK overtime`。
+- **首次 I2C 编译报 `undefined reference to hi_i2c_write/init/set_baudrate`**：因为 I2C 驱动默认没启用——需在 `vendor/hisi/hi3861/hi3861/build/config/usr_config.mk` 设 `CONFIG_I2C_SUPPORT=y`（本任务11 首次用到 I2C，前几个 GPIO 任务无需）；改后需重新构建。
 - **OLED 显示中文需中文字库**：参考版字库只有 ASCII（`F6x8/F8X16`），`SSD1306_ShowStr` 对中文无效；学生版新增 16×16 中文字库 + `SSD1306_ShowChinese()`。
-- **中文字库字库编码**：`HZ16Char` 存 UTF-8 三字节，`SSD1306_ShowChinese()` 用 `str[0..2]` 匹配；若直接传 GBK/GB2312 编码会匹配不到。
-- **I2C 接线**：GPIO9=SCL、GPIO10=SDA；若显示空白，检查接线与 `0x78` 地址是否匹配。
+- **中文字库编码**：`HZ16Char` 存 UTF-8 三字节，`SSD1306_ShowChinese()` 用 `str[0..2]` 匹配；若直接传 GBK/GB2312 编码会匹配不到。
+- **I2C 接线**：GPIO9=SCL、GPIO10=SDA（I2C0，从机地址 `0x78`）；若显示空白，检查接线与地址。

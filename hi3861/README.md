@@ -9,6 +9,7 @@
 | 任务5 | `task05_helloworld/` | OpenHarmony 第一个程序 Hello World（双任务串口打印）| ✅ 编译 + 实机烧录成功 |
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
+| 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
 
@@ -35,6 +36,15 @@
 
 - 关键点：HC-SR04 接 GPIO7(TRIG)/GPIO8(ECHO)；`hi_get_us()` 计时高电平时长→`distance=time*0.034/2`；`osTimerNew/osTimerStart` 创建软件定时器，tick 频率 100Hz（1tick=10ms，3s=300、1s=100）；`hi_get_tick()` 读系统 tick 值。
 - 详见 [`task08_hcsr04_tick/README.md`](task08_hcsr04_tick/README.md)。
+
+## 任务11：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
+
+在 Hi3861 上用 **I2C** 驱动 **SSD1306 OLED 屏**显示字符串。U+ 任务11【学生需要完成内容】：将 **"鸿蒙先锋号"** 以字符形式显示在 OLED 上。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（`SSD1306_ShowChinese()` 显示 5 个 16×16 汉字），烧录待实机验证。
+
+- 关键点：IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`；参考版字库只支持 ASCII，学生版新增 16×16 中文字库 `HZ16` + `SSD1306_ShowChinese()`；**编译前须设 `CONFIG_I2C_SUPPORT=y`**（否则 `undefined reference to hi_i2c_write`）。
+- 详见 [`task11_i2c_ssd1306/README.md`](task11_i2c_ssd1306/README.md)。
 
 ## 通用编译方法（Ubuntu 虚拟机）
 
