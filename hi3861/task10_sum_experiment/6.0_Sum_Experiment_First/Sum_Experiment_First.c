@@ -108,13 +108,16 @@ static void task1(void *arg)
 static void task2(void *arg)
 {
     (void)arg;
-    uint32_t start = hi_get_tick();   /* 记录开始（100Hz）*/
+    uint32_t freq = osKernelGetTickFreq();          /* 实际 tick 频率 */
+    uint32_t start = hi_get_tick();
+    uint32_t limit = 15 * freq;                     /* 15s 对应的 tick 数 */
     uint8_t buf[256] = {0};
+    printf("task2 tickFreq=%u, 15s window=%u ticks\r\n", (unsigned)freq, (unsigned)limit);
     for (;;)
     {
         uint32_t now = hi_get_tick();
         uint32_t elapsed = (now >= start) ? (now - start) : now;
-        if (elapsed < 1500)   /* 前 15s（1500 tick）*/
+        if (elapsed < limit)   /* 前 15s：红外寻线 */
         {
             WifiIotGpioValue l = WIFI_IOT_GPIO_VALUE0, r = WIFI_IOT_GPIO_VALUE0;
             GpioGetInputVal(GPIO_IR_L, &l);
@@ -153,7 +156,7 @@ static void task3(void *arg)
         }
         status = osMessageQueueGet(mid_MsgQueue, &msg_rx, NULL, osWaitForever);
         if (status == osOK)
-            printf("消息队列 Get Idx=%d:%s\r\n", msg_rx.Idx, (char *)msg_rx.Buf);
+            printf("MQ Get Idx=%d:%s\r\n", msg_rx.Idx, (char *)msg_rx.Buf);
         osDelay(100);
     }
 }
