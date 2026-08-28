@@ -1,0 +1,10 @@
+import("//build/lite/config/component/lite_component.gni")
+lite_component("app") {
+    features = [
+        #"1.0_Hello_World:hello_world",
+        #"2.0_TCRT_Timer:TCRT",
+        #"3.0_SG90_Mutex:SG90",
+        #"4.0_Hcsr04_Tick:Hcsr04",
+        "student_5.0_Uart_BLE:Uart",
+        ]
+}

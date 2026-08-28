@@ -10,6 +10,7 @@
 | 任务6 | `task06_tcrt_timer/` | 红外对管收发（TCRT5000）+ 软件定时器 | ✅ 编译 + 实机烧录成功 |
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
+| 任务9 | `task09_uart_ble/` | UART 信息收发（消息队列 + 蓝牙 JDY-16） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
@@ -46,6 +47,15 @@
 
 - 关键点：HC-SR04 接 GPIO7(TRIG)/GPIO8(ECHO)；`hi_get_us()` 计时高电平时长→`distance=time*0.034/2`；`osTimerNew/osTimerStart` 创建软件定时器，tick 频率 100Hz（1tick=10ms，3s=300、1s=100）；`hi_get_tick()` 读系统 tick 值。
 - 详见 [`task08_hcsr04_tick/README.md`](task08_hcsr04_tick/README.md)。
+
+## 任务9：OpenHarmony 系统驱动实验（UART 信息收发 + 消息队列 + 蓝牙）
+
+在 Hi3861 上用 **UART1** 实现信息收发，并结合 **消息队列（osMessageQueue）** 实现任务间通信，蓝牙（JDY-16）透传。U+ 任务9【学生需要完成内容】：在消息队列中**发送多个消息并依次读出**。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（`osMessageQueueNew/Put/Get` 发送多条消息并 FIFO 依次读出），烧录待实机。
+
+- 关键点：串口 **UART1**（GPIO0=TX、GPIO1=RX，9600/8N1）；`UartInit/Read/Write`；`osMessageQueueNew/Put/Get`（生产者 thread2 放 5 条消息+串口数据，消费者 UART_Task 依次读出）；蓝牙 JDY-16 透传接 UART1。
+- 详见 [`task09_uart_ble/README.md`](task09_uart_ble/README.md)。
 
 ## 任务11：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
 
