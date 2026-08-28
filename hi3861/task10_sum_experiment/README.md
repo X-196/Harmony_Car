@@ -73,8 +73,8 @@ python3 build.py wifiiot
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lSum_Experiment_First`）；
 - 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**780232 字节**），已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `b33ee40c290157fc83d3ded49f16cbea`）；
-- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
-- 现象（预期）：串口交替出现 `servo L/R/C dist=X.X cm`（舵机测距）、`IR trace L=x R=y`（前15s 寻线）、`Put/Get msg ...`（消息队列），15s 后蓝牙收数据出现 `BLE recv:xxx`。
+- 烧录：✅ **HiBurn 实机烧录成功**（COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
+- 现象（实测）：串口交替出现 `servo L/R/C dist=X.X cm`（舵机测距）、`IR trace L=x R=y`（前15s 寻线）、`MQ Get ...`（消息队列），15s 后蓝牙发数据出现 `BLE recv:xxx`。✅
 
 ## 踩坑记录
 

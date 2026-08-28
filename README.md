@@ -114,7 +114,7 @@ Harmony_Car/
 - **任务10 · task10_sum_experiment**：第一阶段综合实验（多模块联动）
   - task1 舵机(GPIO2)左右旋转 + 超声波(GPIO7/8)测距；task2 前15s 红外(GPIO13/14)寻线、15s 后蓝牙(UART1/9600)；task3 消息队列多发多读
   - 15s 用 `hi_get_tick()`(100Hz)=1500 tick；三任务同优先级 25 时间片调度
-  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
+  - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录运行成功**（舵机测距 + 红外寻线/蓝牙 + 消息队列）
 - **任务11 · task11_i2c_ssd1306**：OpenHarmony 系统驱动实验（I2C 驱动 OLED + 显示字符串）
   - IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`
   - 学生版新增 **16×16 中文字库** + `SSD1306_ShowChinese()` 显示 **"鸿蒙先锋号"**（参考版字库只有 ASCII）

@@ -11,7 +11,7 @@
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
 | 任务9 | `task09_uart_ble/` | UART 信息收发（消息队列 + 蓝牙 JDY-16） | ✅ 编译 + 实机烧录成功 |
-| 任务10 | `task10_sum_experiment/` | 第一阶段综合实验（舵机+超声波+红外+蓝牙+消息队列） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
+| 任务10 | `task10_sum_experiment/` | 第一阶段综合实验（舵机+超声波+红外+蓝牙+消息队列） | ✅ 编译 + 实机烧录成功 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
@@ -26,7 +26,7 @@
 
 在 Hi3861 上用 **GPIO** 读取**红外对管（TCRT5000 循迹传感器）**信号，并用 **软件定时器（osTimer）** 周期性探测、打印结果。U+ 任务6 只有任务描述（分步指导未发布），本实现按**描述 + 原理图**完成。
 
-**成果**：✅ **编译成功（`BUILD SUCCESS`）**（GPIO13/14 读红外 + `osTimerNew` 每 500ms 打印 `IR L=x R=y`），烧录待实机。
+**成果**：✅ **编译成功（`BUILD SUCCESS`）+ 实机烧录运行成功**（GPIO13/14 读红外 + `osTimerNew` 每 500ms 打印 `IR L=x R=y`）。
 
 - 关键点：红外发射管 3.3VD+120R 硬件常亮；LM393 输出 `TC_OUT_L→IO13`、`TC_OUT_R→IO14`；`GpioGetInputVal` 读信号；软件定时器 tick 频率 100Hz（50 ticks=500ms）。
 - 详见 [`task06_tcrt_timer/README.md`](task06_tcrt_timer/README.md)。
@@ -53,7 +53,7 @@
 
 在 Hi3861 上用 **UART1** 实现信息收发，并结合 **消息队列（osMessageQueue）** 实现任务间通信，蓝牙（JDY-16）透传。U+ 任务9【学生需要完成内容】：在消息队列中**发送多个消息并依次读出**。
 
-**成果**：✅ **编译成功（`BUILD SUCCESS`）**（`osMessageQueueNew/Put/Get` 发送多条消息并 FIFO 依次读出），烧录待实机。
+**成果**：✅ **编译成功（`BUILD SUCCESS`）+ 实机烧录运行成功**（`osMessageQueueNew/Put/Get` 发送多条消息并 FIFO 依次读出）。
 
 - 关键点：串口 **UART1**（GPIO0=TX、GPIO1=RX，9600/8N1）；`UartInit/Read/Write`；`osMessageQueueNew/Put/Get`（生产者 thread2 放 5 条消息+串口数据，消费者 UART_Task 依次读出）；蓝牙 JDY-16 透传接 UART1。
 - 详见 [`task09_uart_ble/README.md`](task09_uart_ble/README.md)。
@@ -62,7 +62,7 @@
 
 综合**舵机测距 + 红外寻线/蓝牙 + 消息队列**，完成第一阶段综合实验。U+ 任务10 只有任务描述（无分步指导），按描述综合实现。
 
-**成果**：✅ **编译成功（`BUILD SUCCESS`）**（task1 舵机左右测距、task2 前15s 红外寻线/后蓝牙、task3 消息队列多发多读，三任务 RTOS 调度），烧录待实机。
+**成果**：✅ **编译成功（`BUILD SUCCESS`）+ 实机烧录运行成功**（task1 舵机左右测距、task2 前15s 红外寻线/后蓝牙、task3 消息队列多发多读，三任务 RTOS 调度）。
 
 - 关键点：舵机 GPIO2、超声波 GPIO7/8、红外 GPIO13/14、蓝牙+UART1 GPIO0/1(9600)+消息队列；15s 用 `hi_get_tick()`(100Hz)=1500 tick；三任务同优先级 25 时间片调度。
 - 详见 [`task10_sum_experiment/README.md`](task10_sum_experiment/README.md)。
@@ -71,7 +71,7 @@
 
 在 Hi3861 上用 **I2C** 驱动 **SSD1306 OLED 屏**显示字符串。U+ 任务11【学生需要完成内容】：将 **"鸿蒙先锋号"** 以字符形式显示在 OLED 上。
 
-**成果**：✅ **编译成功（`BUILD SUCCESS`）**（`SSD1306_ShowChinese()` 显示 5 个 16×16 汉字），烧录待实机验证。
+**成果**：✅ **编译成功（`BUILD SUCCESS`）+ 实机烧录显示成功**（`SSD1306_ShowChinese()` 显示 5 个 24×24 汉字）。
 
 - 关键点：IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`；参考版字库只支持 ASCII，学生版新增 16×16 中文字库 `HZ16` + `SSD1306_ShowChinese()`；**编译前须设 `CONFIG_I2C_SUPPORT=y`**（否则 `undefined reference to hi_i2c_write`）。
 - 详见 [`task11_i2c_ssd1306/README.md`](task11_i2c_ssd1306/README.md)。
