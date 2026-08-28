@@ -13,6 +13,7 @@
 | 任务9 | `task09_uart_ble/` | UART 信息收发（消息队列 + 蓝牙 JDY-16） | ✅ 编译 + 实机烧录成功 |
 | 任务10 | `task10_sum_experiment/` | 第一阶段综合实验（舵机+超声波+红外+蓝牙+消息队列） | ✅ 编译 + 实机烧录成功 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
+| 任务12 | `task12_sht20/` | I2C 读 SHT20 温湿度（信号量同步） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
 
@@ -75,6 +76,15 @@
 
 - 关键点：IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`；参考版字库只支持 ASCII，学生版新增 16×16 中文字库 `HZ16` + `SSD1306_ShowChinese()`；**编译前须设 `CONFIG_I2C_SUPPORT=y`**（否则 `undefined reference to hi_i2c_write`）。
 - 详见 [`task11_i2c_ssd1306/README.md`](task11_i2c_ssd1306/README.md)。
+
+## 任务12：OpenHarmony 系统驱动实验（I2C 读 SHT20 温湿度 + 信号量同步）
+
+在 Hi3861 上用 **IIC**（I2C0）读取 **SHT20 温湿度传感器**，并用 **信号量（osSemaphore）** 实现任务间同步。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（thread1 释放信号量两次 → thread2 读 SHT20 + thread3 同步，串口打印温湿度），烧录待实机。
+
+- 关键点：SHT20 接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x80`）；`SHT20_Init/ReadData`；`osSemaphoreNew(4,0,NULL)` 初始0(同步用)、thread1 每3s释放两次、thread2/3 `osSemaphoreAcquire` 同步；需 `CONFIG_I2C_SUPPORT=y`。
+- 详见 [`task12_sht20/README.md`](task12_sht20/README.md)。
 
 ## 通用编译方法（Ubuntu 虚拟机）
 

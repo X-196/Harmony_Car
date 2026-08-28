@@ -9,7 +9,7 @@
 - **开发方式**：Hi3861 侧在 Ubuntu 虚拟机中基于 OpenHarmony 源码编译，通过 HiBurn 烧录；STM32 侧使用 Keil MDK5 开发，通过 SWD 下载
 - **当前进度**：
   - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 6 / 7 / 8 / 9 / 10 完成（共 10 个任务）
-  - 阶段二（OpenHarmony / Hi3861）：任务 11 完成（I2C OLED 显示）
+  - 阶段二（OpenHarmony / Hi3861）：任务 11（I2C OLED 显示）、任务 12（SHT20 温湿度）完成
   - 阶段三（STM32）：任务 19（串口收发 + WS2812 炫彩灯）、任务 21（PWM 驱动电机）、任务 22（TIMER 编码器测速）、任务 23（PID 电机速度闭环控制）完成
 
 ## 项目结构
@@ -42,9 +42,12 @@ Harmony_Car/
 │   ├── task10_sum_experiment/  # 任务10：第一阶段综合实验（舵机/超声波/红外/蓝牙/消息队列）
 │   │   ├── 6.0_Sum_Experiment_First/   # 综合实验1 工程
 │   │   └── reference/       # app/BUILD.gn 参考
-│   └── task11_i2c_ssd1306/  # 任务11：I2C 驱动 OLED（SSD1306）显示字符串
-│       ├── 7.0_I2c_Ssd1306/      # U+ 参考源程序
-│       ├── student_7.0_I2c_Ssd1306/  # 学生完成版（SSD1306_ShowChinese 显示鸿蒙先锋号）
+│   ├── task11_i2c_ssd1306/  # 任务11：I2C 驱动 OLED（SSD1306）显示字符串
+│   │   ├── 7.0_I2c_Ssd1306/      # U+ 参考源程序
+│   │   ├── student_7.0_I2c_Ssd1306/  # 学生完成版（SSD1306_ShowChinese 显示鸿蒙先锋号）
+│   │   └── reference/       # app/BUILD.gn 参考
+│   └── task12_sht20/       # 任务12：I2C 读 SHT20 温湿度（信号量同步）
+│       ├── 8.0_Sht20/           # 工程（Sht20.c+hal_bsp_sht20）
 │       └── reference/       # app/BUILD.gn 参考
 └── stm32/                   # STM32 侧 Keil MDK5 工程
     ├── 02_串口收发打印/      # 任务19：串口收发 + WS2812 炫彩灯效果
@@ -120,6 +123,10 @@ Harmony_Car/
   - 学生版新增 **16×16 中文字库** + `SSD1306_ShowChinese()` 显示 **"鸿蒙先锋号"**（参考版字库只有 ASCII）
   - ⚠️ 编译前须设 `CONFIG_I2C_SUPPORT=y`（`build/config/usr_config.mk`），否则 `undefined reference to hi_i2c_write`
   - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录显示成功**（24×24 大字号"鸿蒙先锋号"占满整行宽度）
+- **任务12 · task12_sht20**：OpenHarmony 系统驱动实验（I2C 读 SHT20 温湿度 + 信号量同步）
+  - SHT20 接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x80`）；`SHT20_Init/ReadData` 读温度/湿度
+  - `osSemaphoreNew(4,0,NULL)` 初始0(同步用)：thread1 每3s释放两次 → thread2(SHT20)+thread3 同步执行
+  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
 ## 环境与工具链
 
 | 工具 | 用途 |
@@ -155,6 +162,7 @@ Harmony_Car/
 > - [`hi3861/task09_uart_ble/README.md`](hi3861/task09_uart_ble/README.md) —— 任务9 UART 信息收发 + 消息队列
 > - [`hi3861/task10_sum_experiment/README.md`](hi3861/task10_sum_experiment/README.md) —— 任务10 第一阶段综合实验
 > - [`hi3861/task11_i2c_ssd1306/README.md`](hi3861/task11_i2c_ssd1306/README.md) —— 任务11 I2C 驱动 OLED 显示字符串
+> - [`hi3861/task12_sht20/README.md`](hi3861/task12_sht20/README.md) —— 任务12 I2C 读 SHT20 温湿度 + 信号量
 > - [`stm32/README.md`](stm32/README.md) —— STM32 任务19 串口 + 炫彩灯
 > - [`stm32/4_PWM驱动电机/README.md`](stm32/4_PWM驱动电机/README.md) —— 任务21 PWM 驱动电机
 > - [`stm32/5_Timer编码器测速/README.md`](stm32/5_Timer编码器测速/README.md) —— 任务22 TIMER 编码器测速
