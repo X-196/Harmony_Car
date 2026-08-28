@@ -98,7 +98,7 @@ static void UART_Task(void)
     }
 }
 
-/* thread2：读串口数据 + 发送多条消息到消息队列 */
+/* thread2：发送多条消息到消息队列 + 读串口数据（蓝牙/上位机） */
 static void thread2(void)
 {
     uint8_t rt, i;
@@ -108,8 +108,17 @@ static void thread2(void)
     sleep(1);
     while (1)
     {
-        printf("任务2正在运行!\n");
-        /* 通过串口1接收数据（蓝牙/上位机发来） */
+        printf("task2 running!\n");
+        /* 1) 先连续放入多条消息到消息队列（不依赖串口，保证能依次读出） */
+        for (i = 0; i < MSG_NUM; i++)
+        {
+            sprintf((char *)bufs[i], "QST msg %d", i);
+            msg.Idx = i;
+            msg.Buf = bufs[i];
+            if (osMessageQueuePut(mid_MsgQueue, &msg, 0U, 0U) == 0)
+                printf("Put msg Idx=%d : %s\r\n", msg.Idx, msg.Buf);
+        }
+        /* 2) 读串口1数据（蓝牙/上位机发来）；收到就放入队列 */
         rt = UartRead(WIFI_IOT_UART_IDX_1, uart_buff_ptr, UART_BUFF_SIZE);
         if (rt > 0)
         {
@@ -119,15 +128,6 @@ static void thread2(void)
             msg.Buf = (char *)uart_buff_ptr;
             if (osMessageQueuePut(mid_MsgQueue, &msg, 0U, 0U) == 0)
                 printf("Put (uart) msg:%s\n", msg.Buf);
-        }
-        /* 演示"发送多个消息并依次读出"：连续放入多条消息 */
-        for (i = 0; i < MSG_NUM; i++)
-        {
-            sprintf((char *)bufs[i], "QST msg %d", i);
-            msg.Idx = i;
-            msg.Buf = bufs[i];
-            if (osMessageQueuePut(mid_MsgQueue, &msg, 0U, 0U) == 0)
-                printf("Put msg Idx=%d : %s\r\n", msg.Idx, msg.Buf);
         }
         sleep(2);
     }
