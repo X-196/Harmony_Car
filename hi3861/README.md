@@ -7,6 +7,7 @@
 | 任务 | 目录 | 内容 | 状态 |
 |---|---|---|---|
 | 任务5 | `task05_helloworld/` | OpenHarmony 第一个程序 Hello World（双任务串口打印）| ✅ 编译 + 实机烧录成功 |
+| 任务6 | `task06_tcrt_timer/` | 红外对管收发（TCRT5000）+ 软件定时器 | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
@@ -18,6 +19,15 @@
 **成果**：✅ 编译成功 + **实机烧录成功**，串口输出 `Hello World!` / `Hello QST!` 交替打印。
 
 详见 [`task05_helloworld/README.md`](task05_helloworld/README.md)（内容在文件顶部——工程内暂无单独 README，见目录结构）。
+
+## 任务6：OpenHarmony 系统驱动实验（红外对管收发 + 软件定时器）
+
+在 Hi3861 上用 **GPIO** 读取**红外对管（TCRT5000 循迹传感器）**信号，并用 **软件定时器（osTimer）** 周期性探测、打印结果。U+ 任务6 只有任务描述（分步指导未发布），本实现按**描述 + 原理图**完成。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（GPIO13/14 读红外 + `osTimerNew` 每 500ms 打印 `IR L=x R=y`），烧录待实机。
+
+- 关键点：红外发射管 3.3VD+120R 硬件常亮；LM393 输出 `TC_OUT_L→IO13`、`TC_OUT_R→IO14`；`GpioGetInputVal` 读信号；软件定时器 tick 频率 100Hz（50 ticks=500ms）。
+- 详见 [`task06_tcrt_timer/README.md`](task06_tcrt_timer/README.md)。
 
 ## 任务7：OpenHarmony 系统驱动实验（GPIO 驱动舵机 + 互斥锁）
 
