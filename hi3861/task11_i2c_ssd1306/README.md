@@ -6,7 +6,7 @@
 
 > 掌握 OLED 显示字符相关 API，将 **"鸿蒙先锋号"** 以字符形式显示在 OLED 上。
 
-**成果**：✅ 用 `SSD1306_Init/CLS` 初始化清屏，`SSD1306_ShowChinese()` 将 "鸿蒙先锋号"（5 个 16×16 汉字）居中显示到 OLED。
+**成果**：✅ 用 `SSD1306_Init/CLS` 初始化清屏，`SSD1306_ShowChinese24()` 将 "鸿蒙先锋号"（5 个 **24×24** 汉字）居中显示到 OLED（大字号，占满整行宽度）。
 
 ## 目录结构
 
@@ -82,9 +82,9 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，student 版已编译链接 `-lI2c_Ssd1306`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**780744 字节**），已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `de8eaee2c52c2595e511e746d88542c9`）；
-- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
-- 现象（预期）：OLED 上居中显示 **"鸿蒙先锋号"** 五个汉字。
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**780968 字节**），已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `e1aebc1934a7949af978d2271b32c412`）；
+- 烧录：✅ **HiBurn 实机烧录成功**（COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
+- 现象（实测）：OLED 上居中显示 **"鸿蒙先锋号"** 五个汉字（**24×24 大字号，占满整行宽度**）。✅
 
 ## 踩坑记录
 

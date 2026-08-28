@@ -97,7 +97,7 @@ Harmony_Car/
   - IIC 总线（GPIO9=SCL、GPIO10=SDA，I2C0，从机地址 `0x78`）；`I2cInit/I2cWrite/I2cSetBaudrate`
   - 学生版新增 **16×16 中文字库** + `SSD1306_ShowChinese()` 显示 **"鸿蒙先锋号"**（参考版字库只有 ASCII）
   - ⚠️ 编译前须设 `CONFIG_I2C_SUPPORT=y`（`build/config/usr_config.mk`），否则 `undefined reference to hi_i2c_write`
-  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机验证
+  - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录显示成功**（24×24 大字号"鸿蒙先锋号"占满整行宽度）
 ## 环境与工具链
 
 | 工具 | 用途 |

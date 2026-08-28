@@ -9,7 +9,7 @@
 | 任务5 | `task05_helloworld/` | OpenHarmony 第一个程序 Hello World（双任务串口打印）| ✅ 编译 + 实机烧录成功 |
 | 任务7 | `task07_sg90_mutex/` | GPIO 驱动舵机（SG90）+ 互斥锁多任务联动 | ✅ 编译 + 实机烧录成功 |
 | 任务8 | `task08_hcsr04_tick/` | GPIO 驱动超声波（HC-SR04）+ 软件定时器 + tick | ✅ 编译 + 实机烧录成功 |
-| 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
+| 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
 
