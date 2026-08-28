@@ -89,7 +89,7 @@ Harmony_Car/
 - **任务6 · task06_tcrt_timer**：OpenHarmony 系统驱动实验（红外对管收发 + 软件定时器）
   - 红外对管(TCRT5000+LM393) 输出 `TC_OUT_L→IO13`、`TC_OUT_R→IO14`；发射管 3.3VD+120R 硬件常亮
   - 软件定时器 `osTimerNew` 每 500ms 读 GPIO13/14 并打印 `IR L=x R=y ...`
-  - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
+  - ✅ 编译成功（`BUILD SUCCESS`）+ **实机烧录运行成功**
 - **任务7 · task07_sg90_mutex**：OpenHarmony 系统驱动实验（GPIO 驱动舵机 + 互斥锁）
   - GPIO2 软件 PWM 驱动 SG90 舵机（20ms 周期、0.5~2.5ms 脉宽 = 0°~180°）
   - 用 `osMutex` 互斥锁实现**同优先级**三任务对舵机的串行化访问，`osDelay` 错开时序

@@ -74,8 +74,8 @@ python3 build.py wifiiot
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，已编译链接 `-lTCRT`）；
 - 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**778888 字节**），已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `a87224b8fc397f1a4730ce0aacd4e416`）；
-- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
-- 现象（预期）：串口每 500ms 打印 `IR L=x R=y ...`；用手/黑线挡在红外传感器前，对应 `L`/`R` 变为低电平（reflect）。
+- 烧录：✅ **HiBurn 实机烧录成功**（COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
+- 现象（实测）：串口每 500ms 打印 `IR L=x R=y ...`；用反射物挡红外传感器时对应位电平翻转。✅
 
 ## 踩坑记录
 
