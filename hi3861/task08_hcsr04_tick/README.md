@@ -8,7 +8,7 @@
 > - 定时器1：控制超声波 **3 秒**间隔测一次距离；
 > - 定时器2：控制打印当前 **tick 值**。
 
-**成果**：✅ 用 `osTimerNew` 创建 2 个软件定时器，定时器1 每 3s 触发一次 `GetDistance()` 测距并串口打印距离，定时器2 每 1s 打印当前 `hi_get_tick()`；编译成功（`BUILD SUCCESS`）。
+**成果**：✅ 用 `osTimerNew` 创建 2 个软件定时器，定时器1 每 3s 触发一次 `GetDistance()` 测距并串口打印距离，定时器2 每 1s 打印当前 `hi_get_tick()`；编译成功（`BUILD SUCCESS`）+ **实机烧录运行成功**。
 
 ## 目录结构
 
@@ -90,8 +90,8 @@ python3 build.py wifiiot
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，student 版已确认编译并链接 `-lHcsr04`）；
 - 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`（**778472 字节**）；
 - 服务端产物已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `132839df795e177894da30601b0d40a4`，供 HiBurn 烧录）；
-- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键进入下载模式）；
-- 运行现象（预期）：串口每 3s 打印一次 `distance is X.X (cm)`，每 1s 打印一次 `tick value is N`。
+- 烧录：✅ **HiBurn 实机烧录成功**（COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键进入下载模式）；
+- 运行现象（实测）：串口每 3s 打印一次 `distance is X.X (cm)`，每 1s 打印一次 `tick value is N`（tick 值随时间递增）。✅
 
 ## 踩坑记录
 
