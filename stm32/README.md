@@ -101,7 +101,7 @@
 ### 编译与演示
 
 1. 用 **Keil MDK5** 打开 `USER/Template.uvprojx`（USER 组已含 `usart2.c`/`nfc.c`），编译 **0 Error 0 Warning**。
-2. ST-Link SWD 下载到小车主板（本次烧录时板卡未连接，实机烧录待验证）。
+2. ST-Link SWD 下载到小车主板，**实机烧录运行成功**。
 3. TypeC 连接电脑，打开串口助手（115200 8N1），按复位键；将 NFC 卡放置于小车读卡区域 → 后灯交替亮灭，串口打印收帧与卡号。
 
 ---
