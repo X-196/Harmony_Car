@@ -1,29 +1,42 @@
-# Hi3861 任务13：OpenHarmony 系统驱动实验 —— AP3216C 传感器采集光照强度（IIC）
+# Hi3861 任务13：AP3216C 光照强度 + 全传感器仪表盘（IIC）
 
 ## 任务内容
 
-在 Hi3861 上用 **IIC**（I2C0）读取 **AP3216C 三合一环境传感器**，周期采集并打印 **光强（ALS）/ 接近（PS）/ 人体红外（IR）** 三路数据。U+ 任务13 讲解以参考代码为准（未单独列出学生变体，参考即交付实现）。
+在 Hi3861 上用 **IIC**（I2C0）读取 **AP3216C 三合一环境传感器**，周期采集并打印 **光强（ALS）/ 接近（PS）/ 人体红外（IR）** 三路数据；并在应用户要求扩展为**全传感器仪表盘**：OLED 一屏显示光照/温湿度/超声波距离/红外对管全部数据。
 
 - **任务名称**：OpenHarmony 系统驱动实验 - AP3216C 传感器采集光照强度
 - **知识点**：OpenHarmony 系统中 IIC 相关 API 使用以及 AP3216C 相关知识
 - **重点/难点**：IIC 的相关 API 使用
-- **任务内容**：熟悉 IIC 总线相关概念及特点；掌握 IIC 读/写数据原理；了解 AP3216C 硬件与接线原理；掌握通过 IIC 进行 AP3216C 数据采集及相关 API 函数使用。
 
-**成果**：✅ 实机验证通过——单任务每 1s 读 `AP3216C_ReadData(&ir,&als,&ps)`，串口打印 `ir = ..  als = ..  ps = ..`（ASCII 输出不乱码），同时 **OLED 显示三路数据**（AP3216C 与 SSD1306 同挂 I2C0，地址 0x3C/0x78 不冲突）。
+**成果**：✅ 实机验证通过——单任务每 1s 采集 **五路传感器**，串口 ASCII 打印 + **OLED 仪表盘一屏全显**（6x8 字体 8 行布局）。
 
 ## 目录结构
 
 ```
 hi3861/task13_ap3216c/
-├── 9.0_Ap3216c/                 # 任务13 工程（模块名 9.0_Ap3216c:Ap3216c）
-│   ├── Ap3216c.c                # 任务创建 + 循环读 ir/als/ps：串口打印(ASCII) + OLED 显示
+├── 9.0_Ap3216c/                 # 任务13 工程（模块名 9.0_Ap3216c:Ap3216c，全传感器仪表盘版）
+│   ├── Ap3216c.c                # 主任务：五路采集 + OLED 仪表盘 + 串口打印；含超声波 GetDistance
 │   ├── include/hal_bsp_ap3216c.h    # AP3216C 支持包头（地址 0x3C、寄存器定义）
+│   ├── include/hal_bsp_sht20.h      # SHT20 支持包头（自任务12 复用）
 │   ├── include/hal_bsp_ssd1306*.h   # OLED 支持包头（自任务11 复用）
 │   ├── src/hal_bsp_ap3216c.c        # AP3216C I2C 驱动（AP3216C_Init / AP3216C_ReadData）
+│   ├── src/hal_bsp_sht20.c          # SHT20 I2C 驱动（自任务12 复用）
 │   ├── src/hal_bsp_ssd1306.c        # SSD1306 OLED 驱动（自任务11 复用）
 │   └── BUILD.gn
 └── reference/app_BUILD.gn       # applications/sample/wifi-iot/app/BUILD.gn（指向 9.0_Ap3216c:Ap3216c）
 ```
+
+## 传感器清单（五路）
+
+| 传感器 | 总线/引脚 | 地址 | 数据 |
+|---|---|---|---|
+| AP3216C 三合一 | I2C0（GPIO9/10） | 0x3C | ir 红外 / als 光强 / ps 接近 |
+| SHT20 温湿度 | I2C0（GPIO9/10） | 0x80 | 温度 ℃ / 湿度 %RH |
+| HC-SR04 超声波 | GPIO7=TRIG、GPIO8=ECHO | - | 距离 cm |
+| TCRT5000 红外对管 | GPIO13=左、GPIO14=右 | - | 0=检测到黑线 / 1=无 |
+| SSD1306 OLED | I2C0（GPIO9/10） | 0x78 | 显示（输出） |
+
+> 三个 I2C 器件共总线不冲突（地址互异）；超声波/红外为独立 GPIO，不占用 I2C。
 
 ## AP3216C 相关
 
@@ -40,8 +53,25 @@ hi3861/task13_ap3216c/
 
 ## 核心代码说明（9.0_Ap3216c/Ap3216c.c）
 
-- **`Task1`**：`AP3216C_Init()` → `SSD1306_Init()`/`SSD1306_CLS()` → `while(1)` 循环 `AP3216C_ReadData(&ir,&als,&ps)` 读三路数据 → 串口 `printf("ir = %d  als = %d  ps = %d")`（ASCII，串口助手不乱码）→ OLED **8x16 大字体铺满整屏**（标题 + ir/als/ps 各占一行，右对齐 5 位数字）→ `sleep(1)` 每 1s 一次；
-- **`i2c_ap3216c_demo()`**：`osThreadNew` 创建任务（栈 1024、`osPriorityNormal`）；
+- **`Task1`**：依次初始化 `AP3216C_Init()` → `SHT20_Init()` → `SSD1306_Init()`/`SSD1306_CLS()` → 超声波/红外 GPIO → `while(1)` 每 1s：
+  1. `AP3216C_ReadData(&ir,&als,&ps)` 读三合一；
+  2. `SHT20_ReadData(&temp,&humi)` 读温湿度；
+  3. `GetDistance()`（任务8 同款：TRIG 20us 触发 + ECHO 计时，`time*0.034/2`）测距离；
+  4. `GpioGetInputVal(GPIO13/14)` 读红外对管；
+  5. 串口 ASCII 打印一行全数据 + OLED 刷新仪表盘。
+- **OLED 布局**（6x8 字体，21 列 × 8 行）：
+
+```
+    == PIONEER CAR ==
+    ir=  13  als=   82
+    ps=  88
+    T=25.3C H= 45.2%
+    DIST= 12.5cm
+    IR L=0 R=1
+    (0=black 1=none)
+```
+
+- **`i2c_ap3216c_demo()`**：`osThreadNew` 创建任务（栈 4KB，SHT20 浮点 printf 需较大栈）；
 - **启动**：`APP_FEATURE_INIT(i2c_ap3216c_demo)`。
 
 ## 编译方法（Ubuntu 虚拟机）
@@ -67,9 +97,9 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lAp3216c`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（大字体铺满屏版 md5 `4678b0308b0b57aa9063bb81263696a9`）；
-- 实机：✅ **烧录验证通过**——串口每 1s 打印 `ir = ..  als = ..  ps = ..`（数值随光照/接近实时变化，如 ir 13~26、als 82~92、ps 88~100）；OLED 实时显示三路数据；
-- 现象验证：手遮挡/照亮/靠近传感器，三路数值实时变化。
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（全传感器仪表盘版 md5 `d60b40e7ebe5e2a537f3de16409e4c5b`）；
+- 实机：✅ 烧录验证通过（AP3216C 数值随光照/接近变化、OLED 亮屏）；仪表盘全传感器版待烧录验证；
+- 现象：串口每 1s 打印 `ir=.. als=.. ps=.. T=..C H=..% D=..cm L=. R=.`；OLED 一屏显示全部五路数据。
 
 ## 踩坑记录
 
