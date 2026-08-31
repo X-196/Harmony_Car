@@ -59,17 +59,16 @@ hi3861/task13_ap3216c/
   3. `GetDistance()`（任务8 同款：TRIG 20us 触发 + ECHO 计时，`time*0.034/2`）测距离；
   4. `GpioGetInputVal(GPIO13/14)` 读红外对管；
   5. 串口 ASCII 打印一行全数据 + OLED 刷新仪表盘。
-- **OLED 布局**（6x8 字体，21 列 × 8 行）：
+- **OLED 布局**（**8x16 大字体铺满整屏**，16 列 × 4 行，每行 16px 高）：
 
 ```
-    == PIONEER CAR ==
-    ir=  13  als=   82
-    ps=  88
-    T=25.3C H= 45.2%
-    DIST= 12.5cm
-    IR L=0 R=1
-    (0=black 1=none)
+A   82 I  13     ← A=光强als  I=红外ir
+P   88 25C       ← P=接近ps   温度
+45%H L0R1        ← 湿度 + 红外对管(0=黑线)
+ 12.5cm          ← 超声波距离（居中大字）
 ```
+
+> 一行 16 字符不够放变量名全称，用单字母代号：A(als)/I(ir)/P(ps)/T(C)/H(%)/L R(红外对管)；串口日志里有完整名字。
 
 - **`i2c_ap3216c_demo()`**：`osThreadNew` 创建任务（栈 4KB，SHT20 浮点 printf 需较大栈）；
 - **启动**：`APP_FEATURE_INIT(i2c_ap3216c_demo)`。
@@ -97,7 +96,7 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lAp3216c`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（全传感器仪表盘版 md5 `d60b40e7ebe5e2a537f3de16409e4c5b`）；
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（大字体仪表盘版 md5 `2ac9238fbad6a159cecaecbbb45f221c`）；
 - 实机：✅ 烧录验证通过（AP3216C 数值随光照/接近变化、OLED 亮屏）；仪表盘全传感器版待烧录验证；
 - 现象：串口每 1s 打印 `ir=.. als=.. ps=.. T=..C H=..% D=..cm L=. R=.`；OLED 一屏显示全部五路数据。
 

@@ -111,21 +111,16 @@ static void Task1(void)
     printf("ir=%d als=%d ps=%d T=%.1fC H=%.1f%% D=%.1fcm L=%d R=%d\r\n",
            ir, als, ps, temp, humi, dist, (int)l, (int)r);
 
-    /* OLED 仪表盘（6x8 字体：21 列 x 8 行） */
-    snprintf(line, sizeof(line), "== PIONEER CAR ==");
-    SSD1306_ShowStr(20, 0, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "ir=%4d  als=%5u", ir, als);
-    SSD1306_ShowStr(0, 1, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "ps=%4u", ps);
-    SSD1306_ShowStr(0, 2, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "T=%4.1fC H=%4.1f%%", temp, humi);
-    SSD1306_ShowStr(0, 3, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "DIST=%5.1fcm", dist);
-    SSD1306_ShowStr(0, 4, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "IR L=%d R=%d", (int)l, (int)r);
-    SSD1306_ShowStr(0, 5, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "(0=black 1=none)");
-    SSD1306_ShowStr(0, 6, (uint8_t *)line, 8);
+    /* OLED 仪表盘：8x16 大字体铺满整屏（128x64 → 16 列 × 4 行，每行 16px 高）
+     * 行0 光强als + 红外ir；行1 接近ps + 温度T；行2 湿度H + 红外对管L/R；行3 距离cm */
+    snprintf(line, sizeof(line), "A%5u I%4u", als, ir);
+    SSD1306_ShowStr(0, 0, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "P%5u %2.0fC", ps, temp);
+    SSD1306_ShowStr(0, 1, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "%2.0f%%H L%dR%d", humi, (int)l, (int)r);
+    SSD1306_ShowStr(0, 2, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "  %4.1fcm", dist);
+    SSD1306_ShowStr(0, 3, (uint8_t *)line, 16);
 
     sleep(1); /* 1s 刷新 */
   }
