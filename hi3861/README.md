@@ -14,6 +14,7 @@
 | 任务10 | `task10_sum_experiment/` | 第一阶段综合实验（舵机+超声波+红外+蓝牙+消息队列） | ✅ 编译 + 实机烧录成功 |
 | 任务11 | `task11_i2c_ssd1306/` | I2C 驱动 OLED（SSD1306）显示字符串 | ✅ 编译 + 实机烧录成功 |
 | 任务12 | `task12_sht20/` | I2C 读 SHT20 温湿度（信号量同步） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
+| 任务13 | `task13_ap3216c/` | I2C 读 AP3216C 光照/接近/红外（三合一传感器） | ✅ 编译成功（`BUILD SUCCESS`），烧录待实机 |
 
 ## 任务5：OpenHarmony 系统调试实验（Hello World）
 
@@ -85,6 +86,15 @@
 
 - 关键点：SHT20 接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x80`）；`SHT20_Init/ReadData`；`osSemaphoreNew(4,0,NULL)` 初始0(同步用)、thread1 每3s释放两次、thread2/3 `osSemaphoreAcquire` 同步；需 `CONFIG_I2C_SUPPORT=y`。
 - 详见 [`task12_sht20/README.md`](task12_sht20/README.md)。
+
+## 任务13：OpenHarmony 系统驱动实验（I2C 读 AP3216C 光照强度）
+
+在 Hi3861 上用 **IIC**（I2C0）读取 **AP3216C 三合一环境传感器**（ALS 光强 + PS 接近 + IR 红外），周期采集并打印三路数据。U+ 任务13 讲解以参考代码为准（未单独列出学生变体）。
+
+**成果**：✅ **编译成功（`BUILD SUCCESS`）**（单任务每 1s 读 `AP3216C_ReadData(&ir,&als,&ps)` 并串口打印），烧录待实机。
+
+- 关键点：AP3216C 接 I2C0（GPIO9=SCL、GPIO10=SDA），从机地址 **`0x3C`**（7 位地址 0x1E 左移 1 位）；寄存器：系统配置 0x00（0x07 软复位、0x06 ALS+PS+IR 连续测量）、IR 0x0A/0x0B、ALS 0x0C/0x0D、PS 0x0E/0x0F；读寄存器用 **`I2cWriteread`**（先写寄存器地址 + 重复起始读，注意 API 是小写 r）；需 `CONFIG_I2C_SUPPORT=y`。
+- 详见 [`task13_ap3216c/README.md`](task13_ap3216c/README.md)。
 
 ## 通用编译方法（Ubuntu 虚拟机）
 

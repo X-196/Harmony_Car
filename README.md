@@ -9,7 +9,7 @@
 - **开发方式**：Hi3861 侧在 Ubuntu 虚拟机中基于 OpenHarmony 源码编译，通过 HiBurn 烧录；STM32 侧使用 Keil MDK5 开发，通过 SWD 下载
 - **当前进度**：
   - 阶段一（OpenHarmony / Hi3861）：任务 3 / 4 / 5 / 6 / 7 / 8 / 9 / 10 完成（共 10 个任务）
-  - 阶段二（OpenHarmony / Hi3861）：任务 11（I2C OLED 显示）、任务 12（SHT20 温湿度）完成
+  - 阶段二（OpenHarmony / Hi3861）：任务 11（I2C OLED 显示）、任务 12（SHT20 温湿度）、任务 13（AP3216C 光照强度）完成
   - 阶段三（STM32）：任务 19（串口收发 + WS2812 炫彩灯）、任务 20（NFC 读卡）、任务 21（PWM 驱动电机）、任务 22（TIMER 编码器测速）、任务 23（PID 电机速度闭环控制）完成
 
 ## 项目结构
@@ -46,8 +46,11 @@ Harmony_Car/
 │   │   ├── 7.0_I2c_Ssd1306/      # U+ 参考源程序
 │   │   ├── student_7.0_I2c_Ssd1306/  # 学生完成版（SSD1306_ShowChinese 显示鸿蒙先锋号）
 │   │   └── reference/       # app/BUILD.gn 参考
-│   └── task12_sht20/       # 任务12：I2C 读 SHT20 温湿度（信号量同步）
-│       ├── 8.0_Sht20/           # 工程（Sht20.c+hal_bsp_sht20）
+│   ├── task12_sht20/       # 任务12：I2C 读 SHT20 温湿度（信号量同步）
+│   │   ├── 8.0_Sht20/           # 工程（Sht20.c+hal_bsp_sht20）
+│   │   └── reference/       # app/BUILD.gn 参考
+│   └── task13_ap3216c/     # 任务13：I2C 读 AP3216C 光照/接近/红外（三合一传感器）
+│       ├── 9.0_Ap3216c/         # 工程（Ap3216c.c+hal_bsp_ap3216c）
 │       └── reference/       # app/BUILD.gn 参考
 └── stm32/                   # STM32 侧 Keil MDK5 工程
     ├── 02_串口收发打印/      # 任务19：串口收发 + WS2812 炫彩灯效果
@@ -133,6 +136,11 @@ Harmony_Car/
   - SHT20 接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x80`）；`SHT20_Init/ReadData` 读温度/湿度
   - `osSemaphoreNew(4,0,NULL)` 初始0(同步用)：thread1 每3s释放两次 → thread2(SHT20)+thread3 同步执行
   - ✅ 编译成功（`BUILD SUCCESS`），烧录待实机
+- **任务13 · task13_ap3216c**：OpenHarmony 系统驱动实验（I2C 读 AP3216C 光照强度）
+  - AP3216C 三合一传感器（ALS 光强 + PS 接近 + IR 红外）接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x3C`，即 7 位地址 0x1E<<1）
+  - `AP3216C_Init`（软复位 + ALS+PS+IR 连续测量模式）/`AP3216C_ReadData(&ir,&als,&ps)` 读寄存器 0x0A~0x0F
+  - 单任务每 1s 采集打印 ir/als/ps 三路数据；I2C 读寄存器用 `I2cWriteread`（重复起始，注意 API 是小写 r）
+  - ✅ 编译成功（`BUILD SUCCESS`，md5 `e5e79d6c6e852e108641a804c88e599d`），烧录待实机
 ## 环境与工具链
 
 | 工具 | 用途 |
@@ -170,6 +178,7 @@ Harmony_Car/
 > - [`hi3861/task10_sum_experiment/README.md`](hi3861/task10_sum_experiment/README.md) —— 任务10 第一阶段综合实验
 > - [`hi3861/task11_i2c_ssd1306/README.md`](hi3861/task11_i2c_ssd1306/README.md) —— 任务11 I2C 驱动 OLED 显示字符串
 > - [`hi3861/task12_sht20/README.md`](hi3861/task12_sht20/README.md) —— 任务12 I2C 读 SHT20 温湿度 + 信号量
+> - [`hi3861/task13_ap3216c/README.md`](hi3861/task13_ap3216c/README.md) —— 任务13 I2C 读 AP3216C 光照/接近/红外三合一传感器
 > - [`stm32/README.md`](stm32/README.md) —— STM32 任务总览（任务19 串口灯效 / 任务20 NFC 读卡 / 任务21~23 电机控制）
 > - [`stm32/4_PWM驱动电机/README.md`](stm32/4_PWM驱动电机/README.md) —— 任务21 PWM 驱动电机
 > - [`stm32/5_Timer编码器测速/README.md`](stm32/5_Timer编码器测速/README.md) —— 任务22 TIMER 编码器测速
@@ -182,8 +191,9 @@ Harmony_Car/
 - [2026-08-25](diary/2026-08-25.md)：WS2812 炫彩灯驱动思路学习与灯光效果创新；Linux 开发环境配置（虚拟机 + SSH）
 - [2026-08-26](diary/2026-08-26.md)：任务3/4/5（OpenHarmony 环境 + Hello World 烧录）、任务7（GPIO 舵机 + 互斥锁）与任务21（PWM 电机）完成
 - [2026-08-29](diary/2026-08-29.md)：任务20（STM32 NFC 读卡：PN532 唤醒 + 循环寻卡 + 卡号判定）完成
+- [2026-08-31](diary/2026-08-31.md)：任务13（AP3216C 光照强度采集，I2C 三合一传感器）完成
 
 ## 后续计划
 
-- 阶段一剩余任务：任务6、9、10 —— 红外对管收发、UART 信息收发、阶段综合实验；阶段二：任务11 已完成，后续 12 起（温湿度/光照/云平台等）待发布。
+- 阶段二：任务11/12/13 已完成；后续任务（云平台 WiFi/MQTT/JSON 等）待发布。
 - 阶段三任务 20（NFC 读卡）已完成并实机验证（刷卡亮灯 + 串口打印卡号）| 剩下 24~28：更多传感器与运动控制
