@@ -9,16 +9,18 @@
 - **重点/难点**：IIC 的相关 API 使用
 - **任务内容**：熟悉 IIC 总线相关概念及特点；掌握 IIC 读/写数据原理；了解 AP3216C 硬件与接线原理；掌握通过 IIC 进行 AP3216C 数据采集及相关 API 函数使用。
 
-**成果**：✅ 单任务循环采集：`AP3216C_Init()` 初始化后每 1s 读取一次 `AP3216C_ReadData(&ir,&als,&ps)`，串口周期打印 `人体红外传感器(ir) = ..  光强传感器(als) = ..  接近传感器(ps) = ..`。
+**成果**：✅ 实机验证通过——单任务每 1s 读 `AP3216C_ReadData(&ir,&als,&ps)`，串口打印 `ir = ..  als = ..  ps = ..`（ASCII 输出不乱码），同时 **OLED 显示三路数据**（AP3216C 与 SSD1306 同挂 I2C0，地址 0x3C/0x78 不冲突）。
 
 ## 目录结构
 
 ```
 hi3861/task13_ap3216c/
 ├── 9.0_Ap3216c/                 # 任务13 工程（模块名 9.0_Ap3216c:Ap3216c）
-│   ├── Ap3216c.c                # 任务创建 + 循环读 ir/als/ps 并打印
+│   ├── Ap3216c.c                # 任务创建 + 循环读 ir/als/ps：串口打印(ASCII) + OLED 显示
 │   ├── include/hal_bsp_ap3216c.h    # AP3216C 支持包头（地址 0x3C、寄存器定义）
+│   ├── include/hal_bsp_ssd1306*.h   # OLED 支持包头（自任务11 复用）
 │   ├── src/hal_bsp_ap3216c.c        # AP3216C I2C 驱动（AP3216C_Init / AP3216C_ReadData）
+│   ├── src/hal_bsp_ssd1306.c        # SSD1306 OLED 驱动（自任务11 复用）
 │   └── BUILD.gn
 └── reference/app_BUILD.gn       # applications/sample/wifi-iot/app/BUILD.gn（指向 9.0_Ap3216c:Ap3216c）
 ```
@@ -38,7 +40,7 @@ hi3861/task13_ap3216c/
 
 ## 核心代码说明（9.0_Ap3216c/Ap3216c.c）
 
-- **`Task1`**：`AP3216C_Init()` → `while(1)` 循环 `AP3216C_ReadData(&ir,&als,&ps)` 读三路数据 → `printf` 打印 → `sleep(1)` 每 1s 一次；
+- **`Task1`**：`AP3216C_Init()` → `SSD1306_Init()`/`SSD1306_CLS()` → `while(1)` 循环 `AP3216C_ReadData(&ir,&als,&ps)` 读三路数据 → 串口 `printf("ir = %d  als = %d  ps = %d")`（ASCII，串口助手不乱码）→ OLED `SSD1306_ShowStr` 显示标题 + 三行数据 → `sleep(1)` 每 1s 一次；
 - **`i2c_ap3216c_demo()`**：`osThreadNew` 创建任务（栈 1024、`osPriorityNormal`）；
 - **启动**：`APP_FEATURE_INIT(i2c_ap3216c_demo)`。
 
@@ -65,9 +67,9 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lAp3216c`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（修正版 md5 `6522f4e70754ba53aa4d2d928bab3ab3`）；
-- 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
-- 现象（预期）：串口每 1s 打印一行 `人体红外传感器(ir) = x  光强传感器(als) = x  接近传感器(ps) = x`；用手遮挡/照亮传感器、手掌靠近时三路数值相应变化。
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（合并 OLED 版 md5 `5120b40810fb13c6924199e9d9a1a3ff`）；
+- 实机：✅ **烧录验证通过**——串口每 1s 打印 `ir = ..  als = ..  ps = ..`（数值随光照/接近实时变化，如 ir 13~26、als 82~92、ps 88~100）；OLED 实时显示三路数据；
+- 现象验证：手遮挡/照亮/靠近传感器，三路数值实时变化。
 
 ## 踩坑记录
 

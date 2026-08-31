@@ -139,8 +139,8 @@ Harmony_Car/
 - **任务13 · task13_ap3216c**：OpenHarmony 系统驱动实验（I2C 读 AP3216C 光照强度）
   - AP3216C 三合一传感器（ALS 光强 + PS 接近 + IR 红外）接 I2C0（GPIO9=SCL、GPIO10=SDA，地址 `0x3C`，即 7 位地址 0x1E<<1）
   - `AP3216C_Init`（软复位 + ALS+PS+IR 连续测量模式）/`AP3216C_ReadData(&ir,&als,&ps)` 读寄存器 0x0A~0x0F
-  - 单任务每 1s 采集打印 ir/als/ps 三路数据；读寄存器用「写寄存器地址 → I2cRead」两段传输（与 supportPack 一致）
-  - ✅ 编译成功（`BUILD SUCCESS`，修正版 md5 `6522f4e70754ba53aa4d2d928bab3ab3`），烧录待实机
+  - 单任务每 1s 采集打印 ir/als/ps 三路数据（ASCII 输出）+ **OLED 实时显示**（复用任务11 SSD1306 驱动，同挂 I2C0）；读寄存器用「写寄存器地址 → I2cRead」两段传输（与 supportPack 一致）
+  - ✅ 编译 + 实机验证通过（md5 `5120b40810fb13c6924199e9d9a1a3ff`，数值随光照/接近变化，OLED 亮屏显示）
 ## 环境与工具链
 
 | 工具 | 用途 |

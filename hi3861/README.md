@@ -91,7 +91,7 @@
 
 在 Hi3861 上用 **IIC**（I2C0）读取 **AP3216C 三合一环境传感器**（ALS 光强 + PS 接近 + IR 红外），周期采集并打印三路数据。U+ 任务13 讲解以参考代码为准（未单独列出学生变体）。
 
-**成果**：✅ **编译成功（`BUILD SUCCESS`）**（单任务每 1s 读 `AP3216C_ReadData(&ir,&als,&ps)` 并串口打印），烧录待实机。
+**成果**：✅ **编译成功 + 实机验证通过**（串口 ASCII 打印 ir/als/ps 且数值随光照/接近变化；OLED 实时显示三路数据）。
 
 - 关键点：AP3216C 接 I2C0（GPIO9=SCL、GPIO10=SDA），从机地址 **`0x3C`**（7 位地址 0x1E 左移 1 位）；初始化写系统配置 0x00：光 `0x04` 复位再写 `0x03`（ALS+PS+IR）；寄存器：IR 0x0A/0x0B、ALS 0x0C/0x0D、PS 0x0E/0x0F；读寄存器用「写寄存器地址（I2cWrite）→ I2cRead」两段传输（与 supportPack 一致）；需 `CONFIG_I2C_SUPPORT=y`。
 - 详见 [`task13_ap3216c/README.md`](task13_ap3216c/README.md)。
