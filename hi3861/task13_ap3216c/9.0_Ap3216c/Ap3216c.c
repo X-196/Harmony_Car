@@ -19,7 +19,7 @@
  */
 static void Task1(void)
 {
-  char line[26]; /* 128px / 6px 每字符 = 21 列，留余量 */
+  char line[26];
 
   AP3216C_Init();   /* 三合一传感器初始化 */
   SSD1306_Init();   /* OLED 显示屏初始化（同一 I2C0 总线） */
@@ -33,15 +33,16 @@ static void Task1(void)
     /* 串口打印（ASCII，避免串口助手 GBK/UTF-8 乱码） */
     printf("ir = %d    als = %d    ps = %d\r\n", ir, als, ps);
 
-    /* OLED 显示（6x8 字体：每行 21 字符） */
-    snprintf(line, sizeof(line), "AP3216C Light:");
-    SSD1306_ShowStr(0, 0, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "ir  = %d", ir);
-    SSD1306_ShowStr(0, 2, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "als = %d", als);
-    SSD1306_ShowStr(0, 3, (uint8_t *)line, 8);
-    snprintf(line, sizeof(line), "ps  = %d", ps);
-    SSD1306_ShowStr(0, 4, (uint8_t *)line, 8);
+    /* OLED 显示：8x16 大字体铺满整屏（128x64，字符 8x16 → 16 列 × 4 行）
+     * 行号 y 取 0~3：标题一行 + 三路数据各占一行（y*2 为页号） */
+    snprintf(line, sizeof(line), "AP3216C LIGHT");
+    SSD1306_ShowStr(16, 0, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "ir  %5u", ir);
+    SSD1306_ShowStr(0, 1, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "als %5u", als);
+    SSD1306_ShowStr(0, 2, (uint8_t *)line, 16);
+    snprintf(line, sizeof(line), "ps  %5u", ps);
+    SSD1306_ShowStr(0, 3, (uint8_t *)line, 16);
 
     sleep(1); /* 1s */
   }

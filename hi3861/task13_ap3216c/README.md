@@ -40,7 +40,7 @@ hi3861/task13_ap3216c/
 
 ## 核心代码说明（9.0_Ap3216c/Ap3216c.c）
 
-- **`Task1`**：`AP3216C_Init()` → `SSD1306_Init()`/`SSD1306_CLS()` → `while(1)` 循环 `AP3216C_ReadData(&ir,&als,&ps)` 读三路数据 → 串口 `printf("ir = %d  als = %d  ps = %d")`（ASCII，串口助手不乱码）→ OLED `SSD1306_ShowStr` 显示标题 + 三行数据 → `sleep(1)` 每 1s 一次；
+- **`Task1`**：`AP3216C_Init()` → `SSD1306_Init()`/`SSD1306_CLS()` → `while(1)` 循环 `AP3216C_ReadData(&ir,&als,&ps)` 读三路数据 → 串口 `printf("ir = %d  als = %d  ps = %d")`（ASCII，串口助手不乱码）→ OLED **8x16 大字体铺满整屏**（标题 + ir/als/ps 各占一行，右对齐 5 位数字）→ `sleep(1)` 每 1s 一次；
 - **`i2c_ap3216c_demo()`**：`osThreadNew` 创建任务（栈 1024、`osPriorityNormal`）；
 - **启动**：`APP_FEATURE_INIT(i2c_ap3216c_demo)`。
 
@@ -67,7 +67,7 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lAp3216c`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（合并 OLED 版 md5 `5120b40810fb13c6924199e9d9a1a3ff`）；
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（大字体铺满屏版 md5 `4678b0308b0b57aa9063bb81263696a9`）；
 - 实机：✅ **烧录验证通过**——串口每 1s 打印 `ir = ..  als = ..  ps = ..`（数值随光照/接近实时变化，如 ir 13~26、als 82~92、ps 88~100）；OLED 实时显示三路数据；
 - 现象验证：手遮挡/照亮/靠近传感器，三路数值实时变化。
 
