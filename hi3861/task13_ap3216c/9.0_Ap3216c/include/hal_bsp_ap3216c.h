@@ -23,12 +23,12 @@
 #define AP3216C_SYS_SW_RESET 0x07     /* 软复位 */
 
 /* 数据寄存器 */
-#define AP3216C_IR_L_REG     0x0A     /* IR 数据低字节 */
-#define AP3216C_IR_H_REG     0x0B     /* IR 数据高字节（bit15=数据有效位） */
+#define AP3216C_IR_L_REG     0x0A     /* IR 数据低字节（bit7=数据无效标志，bit1:0=数据低位） */
+#define AP3216C_IR_H_REG     0x0B     /* IR 数据高字节（高 8 位） */
 #define AP3216C_ALS_L_REG    0x0C     /* ALS 数据低字节 */
 #define AP3216C_ALS_H_REG    0x0D     /* ALS 数据高字节 */
-#define AP3216C_PS_L_REG     0x0E     /* PS 数据低字节（bit0=目标接近标志） */
-#define AP3216C_PS_H_REG     0x0F     /* PS 数据高字节 */
+#define AP3216C_PS_L_REG     0x0E     /* PS 数据低字节（bit6=数据无效标志，bit3:0=数据低位） */
+#define AP3216C_PS_H_REG     0x0F     /* PS 数据高字节（bit5:0 有效） */
 
 /**
  * @brief AP3216C 读取三合一传感器的 ir / als / ps 数据

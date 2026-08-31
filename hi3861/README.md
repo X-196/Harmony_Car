@@ -93,7 +93,7 @@
 
 **成果**：✅ **编译成功（`BUILD SUCCESS`）**（单任务每 1s 读 `AP3216C_ReadData(&ir,&als,&ps)` 并串口打印），烧录待实机。
 
-- 关键点：AP3216C 接 I2C0（GPIO9=SCL、GPIO10=SDA），从机地址 **`0x3C`**（7 位地址 0x1E 左移 1 位）；寄存器：系统配置 0x00（0x07 软复位、0x06 ALS+PS+IR 连续测量）、IR 0x0A/0x0B、ALS 0x0C/0x0D、PS 0x0E/0x0F；读寄存器用 **`I2cWriteread`**（先写寄存器地址 + 重复起始读，注意 API 是小写 r）；需 `CONFIG_I2C_SUPPORT=y`。
+- 关键点：AP3216C 接 I2C0（GPIO9=SCL、GPIO10=SDA），从机地址 **`0x3C`**（7 位地址 0x1E 左移 1 位）；初始化写系统配置 0x00：光 `0x04` 复位再写 `0x03`（ALS+PS+IR）；寄存器：IR 0x0A/0x0B、ALS 0x0C/0x0D、PS 0x0E/0x0F；读寄存器用「写寄存器地址（I2cWrite）→ I2cRead」两段传输（与 supportPack 一致）；需 `CONFIG_I2C_SUPPORT=y`。
 - 详见 [`task13_ap3216c/README.md`](task13_ap3216c/README.md)。
 
 ## 通用编译方法（Ubuntu 虚拟机）

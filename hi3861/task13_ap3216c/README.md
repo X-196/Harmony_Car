@@ -65,13 +65,16 @@ python3 build.py wifiiot
 ## 实测结果
 
 - 编译：✅ **`python3 build.py wifiiot` → `BUILD SUCCESS`**（Ubuntu 虚拟机 `192.168.124.129`，链接 `-lAp3216c`）；
-- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（md5 `e5e79d6c6e852e108641a804c88e599d`）；
+- 产物：`out/wifiiot/Hi3861_wifiiot_app_allinone.bin`，已拷贝到本机 `../output/Hi3861_wifiiot_app_allinone.bin`（修正版 md5 `6522f4e70754ba53aa4d2d928bab3ab3`）；
 - 烧录：🕐 待实机验证（HiBurn 选 COM9、2000000、选 `allinone.bin`、Auto burn + Connect + 按复位键）；
 - 现象（预期）：串口每 1s 打印一行 `人体红外传感器(ir) = x  光强传感器(als) = x  接近传感器(ps) = x`；用手遮挡/照亮传感器、手掌靠近时三路数值相应变化。
 
 ## 踩坑记录
 
+- **首版实测数值不变化（ir=1/als=0/ps=21 恒定）**：原因有两处，均以官方 supportPack 为准修正——
+  1. **读寄存器方式**：AP3216C 读数据用「先写寄存器地址（I2cWrite 单字节）→ 再 I2cRead」两段传输，与 SHT20 一样；首版用 `I2cWriteread`（重复起始）在该板上读不到有效数据。
+  2. **工作模式取值**：初始化写系统配置寄存器 0x00 应先写 `0x04`（复位）再写 `0x03`（ALS+PS+IR）；首版写的 `0x07`（软复位）+`0x06`（连续测量）在该板上数据寄存器不刷新。
+  3. **数据位拼接**：IR 是 `(data_H<<2)|(data_L&0x03)`（低字节 bit7 为无效标志）；PS 是 `((data_H&0x3F)<<4)|(data_L&0x0F)`（低字节 bit6 为无效标志）——与首版按手册 bit 序写的掩码不同。
 - **I2C 从机地址**：AP3216C 手册标注 7 位地址 `0x1E`；OpenHarmony `I2cWrite/I2cRead` 的 `sensorAddr` 参数需**带读写位的 8 位形式**（`0x1E << 1 = 0x3C`），直接填 `0x1E` 会一直返回非 0 错误码。
-- **读寄存器方式**：AP3216C 读数据 = 先写寄存器地址 + 重复起始（Repeated Start）读 1 字节，用 **`I2cWriteread`（注意是小写 r）**，写错成 `I2cWriteRead` 会报 `implicit declaration`（-Werror 直接编译失败）；分开 `I2cWrite`+`I2cRead` 两次传输对 AP3216C 无效。
 - **必须有 `CONFIG_I2C_SUPPORT=y`**：否则 `undefined reference to hi_i2c_write/init`（与任务11/12 同，I2C 驱动默认未启用）。
 - **必须烧 `allinone.bin`**：`_burn.bin` 缺少元数据，HiBurn 握手失败报 `Wait SELoadr ACK overtime`。

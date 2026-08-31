@@ -11,10 +11,35 @@
  * AP3216C 三合一环境传感器驱动（OpenHarmony WiFi-IoT I2C 接口）
  * 总线：I2C0（GPIO9 = SCL、GPIO10 = SDA），从机地址 0x3C（7 位地址 0x1E << 1）
  * 器件：ALS 数字环境光 + PS 接近传感器 + IR 红外 LED
+ * 说明：读寄存器采用「写寄存器地址 → I2cRead」两段传输（与官方 supportPack 一致，
+ *       Hi3861 WiFi-IoT 的 I2cRead 发起始位时不含 ACK 的问题对本器件同样适用）
  *****************************************************************************/
 
-/* 向 AP3216C 的指定寄存器写一个字节 */
-static uint32_t AP3216C_WriteByte(uint8_t regAddr, uint8_t byte)
+/* 系统配置寄存器（0x00）取值 */
+#define AP3216C_SYS_ALS_PS_ONCE 0x03 /* ALS+PS+IR 单次测量 */
+
+/* 向从机设备发送数据（单字节） */
+static uint32_t AP3216C_SendByte(uint8_t byte)
+{
+  WifiIotI2cData i2cData = {0};
+  i2cData.sendBuf = &byte;
+  i2cData.sendLen = 1;
+
+  return I2cWrite(AP3216C_I2C_IDX, AP3216C_I2C_ADDR, &i2cData);
+}
+
+/* 读从机设备数据 */
+static uint32_t AP3216C_RecvData(uint8_t *data, size_t size)
+{
+  WifiIotI2cData i2cData = {0};
+  i2cData.receiveBuf = data;
+  i2cData.receiveLen = size;
+
+  return I2cRead(AP3216C_I2C_IDX, AP3216C_I2C_ADDR, &i2cData);
+}
+
+/* 向寄存器中写数据：regAddr + byte */
+static uint32_t AP3216C_WriteReg(uint8_t regAddr, uint8_t byte)
 {
   uint8_t buffer[] = {regAddr, byte};
   WifiIotI2cData i2cData = {0};
@@ -24,69 +49,70 @@ static uint32_t AP3216C_WriteByte(uint8_t regAddr, uint8_t byte)
   return I2cWrite(AP3216C_I2C_IDX, AP3216C_I2C_ADDR, &i2cData);
 }
 
-/* 从 AP3216C 的指定寄存器读一个字节：先写寄存器地址，再重复起始读 */
-static uint32_t AP3216C_ReadByte(uint8_t regAddr, uint8_t *byte)
+/* 读寄存器中的数据：先写寄存器地址，再读 1 字节（两段传输，与 supportPack 一致） */
+static uint32_t AP3216C_ReadRegByte(uint8_t regAddr, uint8_t *byte)
 {
-  uint8_t reg = regAddr;
-  WifiIotI2cData i2cData = {0};
-  i2cData.sendBuf = &reg;
-  i2cData.sendLen = 1;
-  i2cData.receiveBuf = byte;
-  i2cData.receiveLen = 1;
+  uint32_t result;
+  uint8_t buffer[2] = {0};
 
-  return I2cWriteread(AP3216C_I2C_IDX, AP3216C_I2C_ADDR, &i2cData);
+  /* 写命令 */
+  result = AP3216C_SendByte(regAddr);
+  if (result != 0)
+  {
+    printf("I2C AP3216C write reg(0x%02x) status = 0x%x!!!\r\n", regAddr, result);
+    return result;
+  }
+
+  /* 读数据 */
+  result = AP3216C_RecvData(buffer, 1);
+  if (result != 0)
+  {
+    printf("I2C AP3216C read reg(0x%02x) status = 0x%x!!!\r\n", regAddr, result);
+    return result;
+  }
+  *byte = buffer[0];
+
+  return 0;
 }
 
-/* 读 ir / als / ps 三路 16 位数据 */
+/* 读 ir / als / ps 三路数据 */
 uint32_t AP3216C_ReadData(uint16_t *ir, uint16_t *als, uint16_t *ps)
 {
   uint32_t result;
-  uint8_t buffer[6] = {0};
+  uint8_t data_H = 0, data_L = 0;
 
-  /* IR：低 0x0A 高 0x0B（高字节 bit15 为数据有效位，需剔除） */
-  result = AP3216C_ReadByte(AP3216C_IR_L_REG, &buffer[0]);
+  /* IR 数据（10 位）：低 0x0A 高 0x0B；低字节 bit7 为数据无效标志 */
+  result = AP3216C_ReadRegByte(AP3216C_IR_L_REG, &data_L);
   if (result != 0)
-  {
-    printf("I2C AP3216C read ir_l status = 0x%x!!!\r\n", result);
     return result;
-  }
-  result = AP3216C_ReadByte(AP3216C_IR_H_REG, &buffer[1]);
+  result = AP3216C_ReadRegByte(AP3216C_IR_H_REG, &data_H);
   if (result != 0)
-  {
-    printf("I2C AP3216C read ir_h status = 0x%x!!!\r\n", result);
     return result;
-  }
-  *ir = (uint16_t)(((buffer[1] & 0x03) << 8) | buffer[0]); /* bit15/14 为标志位，数据 10 位 */
+  if (data_L & 0x80) /* IR_OF 为 1，数据无效 */
+    *ir = 0;
+  else
+    *ir = ((uint16_t)data_H << 2) | (data_L & 0x03);
 
-  /* ALS：低 0x0C 高 0x0D（16 位有效） */
-  result = AP3216C_ReadByte(AP3216C_ALS_L_REG, &buffer[2]);
+  /* ALS 数据（16 位）：低 0x0C 高 0x0D */
+  result = AP3216C_ReadRegByte(AP3216C_ALS_L_REG, &data_L);
   if (result != 0)
-  {
-    printf("I2C AP3216C read als_l status = 0x%x!!!\r\n", result);
     return result;
-  }
-  result = AP3216C_ReadByte(AP3216C_ALS_H_REG, &buffer[3]);
+  result = AP3216C_ReadRegByte(AP3216C_ALS_H_REG, &data_H);
   if (result != 0)
-  {
-    printf("I2C AP3216C read als_h status = 0x%x!!!\r\n", result);
     return result;
-  }
-  *als = (uint16_t)((buffer[3] << 8) | buffer[2]);
+  *als = ((uint16_t)data_H << 8) | data_L;
 
-  /* PS：低 0x0E（bit0 为接近标志） 高 0x0F（10 位数据取高字节部分） */
-  result = AP3216C_ReadByte(AP3216C_PS_L_REG, &buffer[4]);
+  /* PS 数据（10 位）：低 0x0E 高 0x0F；低字节 bit6 为数据无效标志 */
+  result = AP3216C_ReadRegByte(AP3216C_PS_L_REG, &data_L);
   if (result != 0)
-  {
-    printf("I2C AP3216C read ps_l status = 0x%x!!!\r\n", result);
     return result;
-  }
-  result = AP3216C_ReadByte(AP3216C_PS_H_REG, &buffer[5]);
+  result = AP3216C_ReadRegByte(AP3216C_PS_H_REG, &data_H);
   if (result != 0)
-  {
-    printf("I2C AP3216C read ps_h status = 0x%x!!!\r\n", result);
     return result;
-  }
-  *ps = (uint16_t)((buffer[5] << 2) | (buffer[4] & 0x03)); /* PS 数据 10 位：高字节 8 位 + 低字节 2 位 */
+  if (data_L & 0x40) /* 数据无效 */
+    *ps = 0;
+  else
+    *ps = ((uint16_t)(data_H & 0x3F) << 4) | (data_L & 0x0F);
 
   return 0;
 }
@@ -118,20 +144,20 @@ uint32_t AP3216C_Init(void)
     return result;
   }
 
-  /* 软复位，复位后需要等待约 10ms 完成初始化 */
-  result = AP3216C_WriteByte(AP3216C_SYS_CONFIG, AP3216C_SYS_SW_RESET);
+  /* 复位芯片（写 0x04 后等待 5ms） */
+  result = AP3216C_WriteReg(AP3216C_SYS_CONFIG, 0x04);
   if (result != 0)
   {
-    printf("I2C AP3216C sw reset status = 0x%x!!!\r\n", result);
+    printf("I2C AP3216C reset status = 0x%x!!!\r\n", result);
     return result;
   }
-  usleep(10 * 1000);
+  usleep(5000);
 
-  /* 配置为 ALS+PS+IR 连续测量模式 */
-  result = AP3216C_WriteByte(AP3216C_SYS_CONFIG, AP3216C_SYS_ALS_PS_CONT);
+  /* 开启 ALS+PS+IR（0x03 单次测量模式，实测板上有效；supportPack 同款取值） */
+  result = AP3216C_WriteReg(AP3216C_SYS_CONFIG, AP3216C_SYS_ALS_PS_ONCE);
   if (result != 0)
   {
-    printf("I2C AP3216C set config status = 0x%x!!!\r\n", result);
+    printf("I2C AP3216C set mode status = 0x%x!!!\r\n", result);
     return result;
   }
 
