@@ -96,6 +96,16 @@
 - 关键点：AP3216C 接 I2C0（GPIO9=SCL、GPIO10=SDA），从机地址 **`0x3C`**（7 位地址 0x1E 左移 1 位）；初始化写系统配置 0x00：光 `0x04` 复位再写 `0x03`（ALS+PS+IR）；寄存器：IR 0x0A/0x0B、ALS 0x0C/0x0D、PS 0x0E/0x0F；读寄存器用「写寄存器地址（I2cWrite）→ I2cRead」两段传输（与 supportPack 一致）；需 `CONFIG_I2C_SUPPORT=y`。
 - 详见 [`task13_ap3216c/README.md`](task13_ap3216c/README.md)。
 
+## 任务24：系统通信协议（双核综合，UART2 → STM32）
+
+Hi3861（主核）与 STM32（从核）综合：自研 6 字节运动控制协议（`0xFC | 左方向 | 左速度 | 右方向 | 右速度 | 0xFD`，115200-8-N-1），Hi3861 UART2（GPIO_11/12）发帧，STM32 中断解析 + PID 闭环驱动电机，**左转打左转向灯、右转打右转向灯、后退亮倒车灯**（灯带在 STM32 侧）。
+
+**成果**：✅ 编译成功（两侧：BUILD SUCCESS + Keil 0 Error 0 Warning），待实机烧录验证。
+
+- 学生任务（验证前进/后退/左转/右转）：`car_demo` 循环 **前进 2s → 左转 2s → 右转 2s → 后退 2s → 停止 2s**
+- 配套 STM32 工程：[`../stm32/8_双核协议控制/`](../stm32/8_双核协议控制/)
+- 详见 [`task14_uart_correspondence/README.md`](task14_uart_correspondence/README.md)。
+
 ## 通用编译方法（Ubuntu 虚拟机）
 
 ```bash
