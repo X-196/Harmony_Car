@@ -218,124 +218,74 @@ static void regress_middle(void)     // 回中
 }
 
 /*==================== 桌面巡逻逻辑 ====================*/
+#define EDGE_CHECK_MS 60
+#define OBSTACLE_CM 20.0f
+#define TURN_90_MS 700
+#define BACK_MS 300
+#define SCAN_GAP_MS 80
+#define EDGE_STOP_MS 150
 
-#define EDGE_CHECK_MS   60      // 巡航步进周期；SR04 两次触发间隔需>=60ms
-#define OBSTACLE_CM     15.0f   // 前方障碍判定距离
-#define SPIN_MS         1000    // 固定转向时长（约120°，只转一次）
-#define BACK_MS         300     // 探到桌沿后倒车时长
-#define PUSH_MS         1500    // 转向后强制直行脱离墙边
-
-/* 桌沿确认：连续两次读数都"非地面电平"才认定（30ms 间隔，抗噪声） */
 static int edge_detected(int *left_edge)
 {
-    WifiIotGpioValue l = read_ir(GPIOL);
-    WifiIotGpioValue r = read_ir(GPIOR);
-
-    if (l == ground_level && r == ground_level) {
-        return 0;                       // 两侧都在桌面上
-    }
-    usleep(5000);                       // 5ms 后复核
-    l = read_ir(GPIOL);
-    r = read_ir(GPIOR);
-    if (l == ground_level && r == ground_level) {
-        return 0;                       // 毛刺，忽略
-    }
-    *left_edge = (l != ground_level);   // 记下哪一侧悬空
-    return 1;
+    WifiIotGpioValue l = read_ir(GPIOL), r = read_ir(GPIOR);
+    if (l == ground_level && r == ground_level) return 0;
+    usleep(5000); l = read_ir(GPIOL); r = read_ir(GPIOR);
+    if (l == ground_level && r == ground_level) return 0;
+    *left_edge = (l != ground_level); return 1;
 }
 
-/* 原地转向 duration_ms，期间持续检测桌沿（探到就中断返回1，外层重新处理） */
 static int spin_for(int turn_left, uint32_t duration_ms)
 {
-    uint32_t t = 0;
-    int dummy;
+    uint32_t t = 0; int dummy;
     while (t < duration_ms) {
         if (turn_left) car_left(); else car_right();
-        usleep(EDGE_CHECK_MS);
-        t += EDGE_CHECK_MS;
-        if (edge_detected(&dummy)) {    // 转弯途中探到桌沿：停，交给外层
-            return 1;
-        }
+        usleep(EDGE_CHECK_MS * 1000); t += EDGE_CHECK_MS;
+        if (edge_detected(&dummy)) { car_stop(); return 1; }
     }
-    return 0;
+    car_stop(); return 0;
 }
 
-/*
- * 开机标定地面电平：小车此刻应放在桌面中央。
- * 连续读 10 次左红外取多数（开机时两侧都在桌面上，以左侧为准）。
- * 这样无论桌面深色/浅色，"桌沿=读数突变"，不会因桌面颜色误判。
- */
+static float scan_side_distance(int left_side)
+{
+    float d[3], tmp; int i, j;
+    if (left_side) engine_turn_left(); else engine_turn_right();
+    usleep(SCAN_GAP_MS * 1000);
+    for (i = 0; i < 3; i++) { d[i] = get_distance_cm(); usleep(EDGE_CHECK_MS * 1000); }
+    for (i = 0; i < 2; i++) for (j = i + 1; j < 3; j++)
+        if (d[i] > d[j]) { tmp = d[i]; d[i] = d[j]; d[j] = tmp; }
+    return d[1];
+}
+
 static void calibrate_ground(void)
 {
     int cnt1 = 0, i;
-    for (i = 0; i < 10; i++) {
-        if (read_ir(GPIOL) == WIFI_IOT_GPIO_VALUE1) cnt1++;
-        usleep(20000);
-    }
+    for (i = 0; i < 10; i++) { if (read_ir(GPIOL) == WIFI_IOT_GPIO_VALUE1) cnt1++; usleep(20000); }
     ground_level = (cnt1 >= 5) ? WIFI_IOT_GPIO_VALUE1 : WIFI_IOT_GPIO_VALUE0;
     printf("Ground calibrated: %d (1=%d/10)\r\n", (int)ground_level, cnt1);
 }
 
-/*
- * 桌面巡逻状态机（单次决策）：
- *   前进 -> 障碍<15cm 刹车 -> 只转一次约120° -> 强制前进1.5s。
- *   转弯/强制前进阶段不测超声波，只保留桌沿检测，避免墙前连环转圈。
- */
 static void car_patrol(void)
 {
-    int left_edge;
-    float dist;
-    uint8_t turn_left_next = 1;     // 每遇到一个新障碍切换左右方向
-
-    printf("Table patrol start\r\n");
-    calibrate_ground();
-    regress_middle();               // 舵机回中，超声波朝前
-    usleep(100000);
-
+    int left_edge; float dist, dist_l, dist_r;
+    printf("Table patrol start\r\n"); calibrate_ground(); regress_middle(); usleep(100000);
     while (1) {
-        /*---- 1. 桌沿检测（最高优先级） ----*/
         if (edge_detected(&left_edge)) {
-            printf("EDGE %s!\r\n", left_edge ? "L" : "R");
-            car_stop();
-            usleep(150000);         // 刹车（后红灯亮）
-            car_backward();         // 倒车离开桌沿
-            usleep(BACK_MS * 1000);
-            car_stop();
-            usleep(100000);
-            (void)spin_for(left_edge ? 0 : 1, SPIN_MS);  // 向另一侧转 90°
-            continue;               // 回到巡航
+            car_stop(); usleep(EDGE_STOP_MS * 1000); car_backward(); usleep(BACK_MS * 1000);
+            car_stop(); usleep(100000); (void)spin_for(left_edge ? 0 : 1, TURN_90_MS); regress_middle(); continue;
         }
-
-        /*---- 2. 前方障碍：刹车 -> 同向连转90°直到前方畅通 ----*/
         dist = get_distance_cm();
         if (dist < OBSTACLE_CM) {
-            printf("OBSTACLE %dcm -> brake & turn %s\r\n", (int)dist,
-                   turn_left_next ? "L" : "R");
-            car_stop();             // 刹车（STM32 点亮后红灯）
-            usleep(250000);         // 等车完全停稳
-
-            /* 只转一次，不在转弯中重复测距 */
-            (void)spin_for(turn_left_next, SPIN_MS);
-            turn_left_next = !turn_left_next;
-
-            /* 强制前进1.5s脱离墙边；期间只查桌沿，不测超声波 */
-            {
-                uint32_t t = 0;
-                int dummy;
-                while (t < PUSH_MS) {
-                    car_forward();
-                    usleep(EDGE_CHECK_MS);
-                    t += EDGE_CHECK_MS;
-                    if (edge_detected(&dummy))
-                        break;
-                }
-            }
-            continue;
+            printf("OBSTACLE %dcm -> BRAKE, SCAN\r\n", (int)dist); car_stop(); usleep(250000);
+            dist_l = scan_side_distance(1); regress_middle(); usleep(SCAN_GAP_MS * 1000);
+            dist_r = scan_side_distance(0); regress_middle();
+            printf("SCAN L=%d R=%d\r\n", (int)dist_l, (int)dist_r);
+            if (dist_l >= OBSTACLE_CM && dist_r < OBSTACLE_CM) (void)spin_for(1, TURN_90_MS);
+            else if (dist_r >= OBSTACLE_CM && dist_l < OBSTACLE_CM) (void)spin_for(0, TURN_90_MS);
+            else if (dist_l >= OBSTACLE_CM && dist_r >= OBSTACLE_CM) (void)spin_for(dist_l >= dist_r, TURN_90_MS);
+            else { (void)spin_for(1, TURN_90_MS); (void)spin_for(1, TURN_90_MS); }
+            regress_middle(); usleep(100000); continue;
         }
-
-        /*---- 3. 正常巡航（前灯亮） ----*/
-        car_forward();              // 每周期重发帧（坏帧下一周期即纠正）
-        usleep(EDGE_CHECK_MS);
+        car_forward(); usleep(EDGE_CHECK_MS * 1000);
     }
 }
 
