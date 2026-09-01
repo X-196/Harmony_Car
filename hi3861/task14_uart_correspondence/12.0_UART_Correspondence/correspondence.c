@@ -219,13 +219,11 @@ static void regress_middle(void)     // 回中
 
 /*==================== 桌面巡逻逻辑 ====================*/
 
-#define EDGE_CHECK_MS   60      // 巡航步进周期（同时也是桌沿检测/测距节拍；
-                                // SR04 要求两次触发间隔≥60ms，过密会把上次回波
-                                // 拖尾当新回波 -> 幻影短距离 -> 假障碍 -> 转圈）
-#define OBSTACLE_CM     15.0f   // 前方障碍判定距离（实测 25 太早触发，改 15）
-#define SPIN_MS         700     // 原地转一次的时长（约 90°，实车可调）
+#define EDGE_CHECK_MS   60      // 巡航步进周期；SR04 两次触发间隔需>=60ms
+#define OBSTACLE_CM     15.0f   // 前方障碍判定距离
+#define SPIN_MS         1000    // 固定转向时长（约120°，只转一次）
 #define BACK_MS         300     // 探到桌沿后倒车时长
-#define PUSH_MS         600     // 避障转向后强制前进时长：离开障碍判定区
+#define PUSH_MS         1500    // 转向后强制直行脱离墙边
 
 /* 桌沿确认：连续两次读数都"非地面电平"才认定（30ms 间隔，抗噪声） */
 static int edge_detected(int *left_edge)
@@ -279,15 +277,15 @@ static void calibrate_ground(void)
 }
 
 /*
- * 桌面巡逻状态机（简单可靠版，转弯方向交替以免在角落里循环）：
- *   前进(亮前灯) -> 障碍<15cm 刹车(亮后红灯) -> 转90°(转向灯) -> 前进600ms
- *   -> 继续巡逻，遇到下一个障碍重复。桌沿检测全程最高优先级。
+ * 桌面巡逻状态机（单次决策）：
+ *   前进 -> 障碍<15cm 刹车 -> 只转一次约120° -> 强制前进1.5s。
+ *   转弯/强制前进阶段不测超声波，只保留桌沿检测，避免墙前连环转圈。
  */
 static void car_patrol(void)
 {
     int left_edge;
     float dist;
-    uint8_t turn_left_next = 1;     // 下一次避障转向方向（左右交替）
+    uint8_t turn_left_next = 1;     // 每遇到一个新障碍切换左右方向
 
     printf("Table patrol start\r\n");
     calibrate_ground();
@@ -308,18 +306,19 @@ static void car_patrol(void)
             continue;               // 回到巡航
         }
 
-        /*---- 2. 前方障碍：刹车 -> 转90° -> 前进 ----*/
+        /*---- 2. 前方障碍：刹车 -> 同向连转90°直到前方畅通 ----*/
         dist = get_distance_cm();
         if (dist < OBSTACLE_CM) {
             printf("OBSTACLE %dcm -> brake & turn %s\r\n", (int)dist,
                    turn_left_next ? "L" : "R");
             car_stop();             // 刹车（STM32 点亮后红灯）
-            usleep(200000);
+            usleep(250000);         // 等车完全停稳
 
-            (void)spin_for(turn_left_next, SPIN_MS);      // 转 90°（转向灯自动闪）
-            turn_left_next = !turn_left_next;             // 下次交替转向
+            /* 只转一次，不在转弯中重复测距 */
+            (void)spin_for(turn_left_next, SPIN_MS);
+            turn_left_next = !turn_left_next;
 
-            /* 转向前進 PUSH_ms 离开障碍判定区，期间照常查桌沿 */
+            /* 强制前进1.5s脱离墙边；期间只查桌沿，不测超声波 */
             {
                 uint32_t t = 0;
                 int dummy;
@@ -328,7 +327,7 @@ static void car_patrol(void)
                     usleep(EDGE_CHECK_MS);
                     t += EDGE_CHECK_MS;
                     if (edge_detected(&dummy))
-                        break;     // 前进途中探到桌沿：立即中断，外层处理
+                        break;
                 }
             }
             continue;
