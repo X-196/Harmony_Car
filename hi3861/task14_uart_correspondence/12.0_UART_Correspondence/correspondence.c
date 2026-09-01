@@ -75,28 +75,28 @@ void stm32motor_control(int motorA, int motorB)
     UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 6);
 }
 
-// 小车前进
+// 小车前进（0.7圈/s，约10cm/s，演示用低速更稳）
 void car_forward(void)
 {
-    stm32motor_control(100, 100);
+    stm32motor_control(70, 70);
 }
 
 // 小车后退
 void car_backward(void)
 {
-    stm32motor_control(-100, -100);
+    stm32motor_control(-70, -70);
 }
 
-// 小车左转（左轮慢、右轮快 → 车头向左；STM32 侧点亮左侧转向灯）
+// 小车左转前进（缓弧线：左轮0.65/右轮1.1圈/s，循迹同款差速，边走边转不甩头）
 void car_left(void)
 {
-    stm32motor_control(50, 150);
+    stm32motor_control(65, 110);
 }
 
-// 小车右转（左轮快、右轮慢 → 车头向右；STM32 侧点亮右侧转向灯）
+// 小车右转前进（缓弧线：左轮1.1/右轮0.65圈/s）
 void car_right(void)
 {
-    stm32motor_control(150, 50);
+    stm32motor_control(110, 65);
 }
 
 // 小车停止
@@ -105,33 +105,48 @@ void car_stop(void)
     stm32motor_control(0, 0);
 }
 
+/* 动作步进：持续 duration_ms 毫秒，期间每 200ms 重发一次协议帧（抗帧丢失） */
+static void run_step(void (*action)(void), uint32_t duration_ms)
+{
+    uint32_t elapsed = 0;
+    action();                              // 立即发第一帧
+    while (elapsed < duration_ms) {
+        usleep(200000);                    // 200ms
+        elapsed += 200;
+        if (elapsed < duration_ms) {
+            action();                      // 周期重发
+        }
+    }
+}
+
 /*
- * 演示任务：依次验证前进、左转、右转、后退、停止。
- * 帧只在动作开始时发送一次，STM32 侧会锁存并闭环保持该目标。
+ * 演示任务（时序按演示需求调）：
+ *   前进 3s → 左转前进 2s → 右转前进 2s → 停 0.5s（PID刹车缓冲）
+ *   → 倒车 2s → 停 2s，循环。
+ * 帧每 200ms 周期重发：万一某帧被干扰损坏，200ms 内下一帧即纠正，
+ * 比只发一次抗噪得多（讲解同款机制）。
  */
 static void car_demo(void)
 {
     printf("Dual-core protocol demo start\r\n");
     while (1) {
         printf("FORWARD\r\n");
-        car_forward();          // 前进 2s
-        usleep(2000000);
+        run_step(car_forward, 3000);   // 前进 3s
 
         printf("LEFT\r\n");
-        car_left();             // 左转 2s（左转向灯闪）
-        usleep(2000000);
+        run_step(car_left, 2000);      // 左转前进 2s（左转向灯闪）
 
         printf("RIGHT\r\n");
-        car_right();            // 右转 2s（右转向灯闪）
-        usleep(2000000);
-
-        printf("BACKWARD\r\n");
-        car_backward();         // 后退 2s（倒车灯亮）
-        usleep(2000000);
+        run_step(car_right, 2000);     // 右转前进 2s（右转向灯闪）
 
         printf("STOP\r\n");
-        car_stop();             // 停止 2s（灯全灭）
-        usleep(2000000);
+        run_step(car_stop, 500);       // 停 0.5s（刹车缓冲，前进->倒车不硬反向）
+
+        printf("BACKWARD\r\n");
+        run_step(car_backward, 2000);  // 倒车 2s（倒车灯亮）
+
+        printf("STOP\r\n");
+        run_step(car_stop, 2000);      // 停 2s（灯全灭）
     }
 }
 
