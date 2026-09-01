@@ -83,16 +83,16 @@ void car_backward(void)
     stm32motor_control(-60, -60);
 }
 
-// 原地左转（左轮反转/右轮正转，避障用）
+// 左转前进（两轮同向差速，避免反向轮PID切换导致转向时车体不动）
 void car_left(void)
 {
-    stm32motor_control(-50, 150);
+    stm32motor_control(65, 110);
 }
 
-// 原地右转（左轮正转/右轮反转）
+// 右转前进（两轮同向差速）
 void car_right(void)
 {
-    stm32motor_control(150, -50);
+    stm32motor_control(110, 65);
 }
 
 // 缓弧左转前进（循迹用差速）
