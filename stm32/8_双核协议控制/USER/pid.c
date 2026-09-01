@@ -142,7 +142,19 @@ void System_Control(void)
         uart_rec_flag = 0;
         memset((void*)CAR_buff, 0, 4);    //清除 等待获取下一帧
 
-        printf("Frame: A=%.2f B=%.2f led=%d\r\n", (double)Target_MotorA, (double)Target_MotorB, Car_Led_State);
+        /* 只在目标变化时打印一次（不在中断里高频 printf：
+         * 115200 下一行约 4ms 阻塞，会丢 SysTick 节拍 -> 采样窗口抖动 -> 车顿挫）*/
+        {
+            static float lastA = 0, lastB = 0;
+            static u8  lastLed = 0xFF;
+            if (Target_MotorA != lastA || Target_MotorB != lastB || Car_Led_State != lastLed)
+            {
+                printf("Frame: A=%.2f B=%.2f led=%d\r\n", (double)Target_MotorA, (double)Target_MotorB, Car_Led_State);
+                lastA = Target_MotorA;
+                lastB = Target_MotorB;
+                lastLed = Car_Led_State;
+            }
+        }
     }
 
     // 读取 OverflowTime ms 时间内两轮编码器脉冲数

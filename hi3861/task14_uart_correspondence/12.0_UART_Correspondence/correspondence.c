@@ -131,7 +131,7 @@ static void car_demo(void)
     printf("Dual-core protocol demo start\r\n");
     while (1) {
         printf("FORWARD\r\n");
-        run_step(car_forward, 3000);   // 前进 3s
+        run_step(car_forward, 5000);   // 前进 5s（直线段加长，看得出走直效果）
 
         printf("LEFT\r\n");
         run_step(car_left, 2000);      // 左转前进 2s（左转向灯闪）
