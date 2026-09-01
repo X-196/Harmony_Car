@@ -115,16 +115,14 @@ int Rs_To_CPR(float rads)
 void System_Control(void)
 {
     int TageA = 0, TageB = 0;   // 理论目标编码器值
+    static u8 no_frame_ticks = 0; // 100ms/次，5次无新帧即通信超时
 
     /******获取解析数据帧********/
     if (uart_rec_flag)                   //收到一帧数据
     {
-        Target_MotorA = CAR_buff[1] / 100.0f;   //左轮转速绝对值(圈/s)
-        Target_MotorB = CAR_buff[3] / 100.0f;   //右轮转速绝对值
-
-        //转速值还原(方向参数)
-        if (CAR_buff[0] == 1) Target_MotorA = -1 * Target_MotorA;
-        if (CAR_buff[2] == 1) Target_MotorB = -1 * Target_MotorB;
+        no_frame_ticks = 0;
+        Target_MotorA = CAR_buff[0] / 100.0f;   //左轮有符号转速(圈/s)
+        Target_MotorB = CAR_buff[1] / 100.0f;   //右轮有符号转速(圈/s)
 
         //车灯状态判定(供主循环渲染转向灯/倒车灯)
         if (Target_MotorA < 0 && Target_MotorB < 0)          // 两轮都后退 -> 倒车
@@ -140,7 +138,7 @@ void System_Control(void)
         Car_Led_Tick = 0;
 
         uart_rec_flag = 0;
-        memset((void*)CAR_buff, 0, 4);    //清除 等待获取下一帧
+        memset((void*)CAR_buff, 0, sizeof(CAR_buff));    //清除 等待获取下一帧
 
         /* 只在目标变化时打印一次（不在中断里高频 printf：
          * 115200 下一行约 4ms 阻塞，会丢 SysTick 节拍 -> 采样窗口抖动 -> 车顿挫）*/
@@ -155,6 +153,18 @@ void System_Control(void)
                 lastLed = Car_Led_State;
             }
         }
+    }
+    else if (no_frame_ticks < 255)
+    {
+        no_frame_ticks++;
+    }
+
+    /* V2失效保护：500ms没有有效新帧立即停车，防止主核掉线后保持旧指令 */
+    if (no_frame_ticks >= 5)
+    {
+        Target_MotorA = 0;
+        Target_MotorB = 0;
+        Car_Led_State = CAR_LED_STOP;
     }
 
     // 读取 OverflowTime ms 时间内两轮编码器脉冲数

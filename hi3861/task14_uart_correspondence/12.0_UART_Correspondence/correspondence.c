@@ -2,8 +2,8 @@
  * 任务24：系统通信协议（双核综合）——桌面巡逻模式
  *
  * Hi3861（主核）通过 UART2（GPIO_11=TXD / GPIO_12=RXD，115200-8-N-1）
- * 向 STM32（从核）发送 6 字节运动控制帧：
- *   0xFC | 左轮方向(0/1) | 左轮速度(×100,圈/s) | 右轮方向 | 右轮速度 | 0xFD
+ * 向 STM32（从核）发送 V2 10 字节运动控制帧：
+ *   0xFC | 0x02 | 0x0A | 左轮int16(×100) | 右轮int16(×100) | 序号 | XOR | 0xFD
  *
  * 本模式：小车在桌面上自主巡逻，不会掉下桌子，并避让周围障碍物。
  *   - 防跌落：TCRT5000 红外对管朝下探桌沿（GPIO_13=左 / GPIO_14=右），
@@ -46,38 +46,29 @@ uint8_t uart_sendbuf[20];
 */
 void stm32motor_control(int motorA, int motorB)
 {
-    uint8_t A_dir = 0;
-    uint8_t B_dir = 0;
+    static uint8_t seq = 0;
+    uint8_t checksum;
 
-    //小车运动方向 前进（正转）：0   后退（反转） 1
-    if (motorA < 0) {
-        A_dir = 1;
-        motorA = -motorA;
-    } else {
-        A_dir = 0;
-    }
-    if (motorB < 0) {
-        B_dir = 1;
-        motorB = -motorB;
-    } else {
-        B_dir = 0;
-    }
-    //限制幅度 -150 ~150
-    if (motorA > 150) {
-        motorA = 150;
-    }
-    if (motorB > 150) {
-        motorB = 150;
-    }
+    // V2 直接传有符号速度，范围 -150~150（单位：0.01圈/s）
+    if (motorA > 150) motorA = 150;
+    if (motorA < -150) motorA = -150;
+    if (motorB > 150) motorB = 150;
+    if (motorB < -150) motorB = -150;
 
-    // 数据协议
-    uart_sendbuf[0] = 0xFC;   // 帧头
-    uart_sendbuf[1] = A_dir;  // 左轮方向    0正转，1反转
-    uart_sendbuf[2] = motorA; // 左轮速度
-    uart_sendbuf[3] = B_dir;  // 右轮方向    0正转，1反转
-    uart_sendbuf[4] = motorB; // 右轮速度
-    uart_sendbuf[5] = 0xFD;   // 帧尾
-    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 6);
+    // V2: FC | version | length | left int16 LE | right int16 LE | seq | xor | FD
+    uart_sendbuf[0] = 0xFC;
+    uart_sendbuf[1] = 0x02;
+    uart_sendbuf[2] = 0x0A;
+    uart_sendbuf[3] = (uint8_t)(motorA & 0xFF);
+    uart_sendbuf[4] = (uint8_t)((motorA >> 8) & 0xFF);
+    uart_sendbuf[5] = (uint8_t)(motorB & 0xFF);
+    uart_sendbuf[6] = (uint8_t)((motorB >> 8) & 0xFF);
+    uart_sendbuf[7] = seq++;
+    checksum = uart_sendbuf[1] ^ uart_sendbuf[2] ^ uart_sendbuf[3] ^
+               uart_sendbuf[4] ^ uart_sendbuf[5] ^ uart_sendbuf[6] ^ uart_sendbuf[7];
+    uart_sendbuf[8] = checksum;
+    uart_sendbuf[9] = 0xFD;
+    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 10);
 }
 
 // 小车前进（巡逻巡航 0.6 圈/s ≈ 8.5cm/s，低速保证桌沿检测余量）
