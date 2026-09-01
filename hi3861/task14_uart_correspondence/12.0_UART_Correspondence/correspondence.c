@@ -83,16 +83,16 @@ void car_backward(void)
     stm32motor_control(-60, -60);
 }
 
-// 左转弧线：降低转向冲击，仍保持明显方向差
+// 左转：左轮停止、右轮前进，单轮支点转向（比差速弧线更容易准确转90°）
 void car_left(void)
 {
-    stm32motor_control(50, 90);
+    stm32motor_control(0, 70);
 }
 
-// 右转弧线
+// 右转：右轮停止、左轮前进，单轮支点转向
 void car_right(void)
 {
-    stm32motor_control(90, 50);
+    stm32motor_control(70, 0);
 }
 
 // 缓弧左转前进（循迹用差速）
