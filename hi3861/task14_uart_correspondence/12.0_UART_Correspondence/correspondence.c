@@ -133,8 +133,11 @@ void car_stop(void)
 // SG90 舵机：GPIO_2
 #define GPIO_SG90 2
 
-// 地面电平（开机标定）：读数 != 地面电平 => 探到桌沿/悬空
-static WifiIotGpioValue ground_level = WIFI_IOT_GPIO_VALUE0;
+// 桌沿保护开关：地面测试先设为0；放回桌面演示前改回1并重新编译
+#define EDGE_GUARD_ENABLE 0
+// 左右传感器分别标定，不能用一个传感器的电平代表另一侧
+static WifiIotGpioValue __attribute__((unused)) ground_level_left = WIFI_IOT_GPIO_VALUE0;
+static WifiIotGpioValue __attribute__((unused)) ground_level_right = WIFI_IOT_GPIO_VALUE0;
 
 static void sensor_init(void)
 {
@@ -145,7 +148,7 @@ static void sensor_init(void)
     GpioSetOutputVal(GPIO_TRIG, WIFI_IOT_GPIO_VALUE0);
 }
 
-static WifiIotGpioValue read_ir(unsigned int gpio)
+static WifiIotGpioValue __attribute__((unused)) read_ir(unsigned int gpio)
 {
     WifiIotGpioValue v = WIFI_IOT_GPIO_VALUE0;
     GpioGetInputVal(gpio, &v);
@@ -227,11 +230,16 @@ static void regress_middle(void)     // 回中
 
 static int edge_detected(int *left_edge)
 {
+#if EDGE_GUARD_ENABLE
     WifiIotGpioValue l = read_ir(GPIOL), r = read_ir(GPIOR);
-    if (l == ground_level && r == ground_level) return 0;
+    if (l == ground_level_left && r == ground_level_right) return 0;
     usleep(5000); l = read_ir(GPIOL); r = read_ir(GPIOR);
-    if (l == ground_level && r == ground_level) return 0;
-    *left_edge = (l != ground_level); return 1;
+    if (l == ground_level_left && r == ground_level_right) return 0;
+    *left_edge = (l != ground_level_left); return 1;
+#else
+    (void)left_edge;
+    return 0;
+#endif
 }
 
 static int spin_for(int turn_left, uint32_t duration_ms)
@@ -258,15 +266,24 @@ static float scan_side_distance(int left_side)
 
 static void calibrate_ground(void)
 {
-    int cnt1 = 0, i;
-    for (i = 0; i < 10; i++) { if (read_ir(GPIOL) == WIFI_IOT_GPIO_VALUE1) cnt1++; usleep(20000); }
-    ground_level = (cnt1 >= 5) ? WIFI_IOT_GPIO_VALUE1 : WIFI_IOT_GPIO_VALUE0;
-    printf("Ground calibrated: %d (1=%d/10)\r\n", (int)ground_level, cnt1);
+#if EDGE_GUARD_ENABLE
+    int left1 = 0, right1 = 0, i;
+    for (i = 0; i < 10; i++) {
+        if (read_ir(GPIOL) == WIFI_IOT_GPIO_VALUE1) left1++;
+        if (read_ir(GPIOR) == WIFI_IOT_GPIO_VALUE1) right1++;
+        usleep(20000);
+    }
+    ground_level_left = (left1 >= 5) ? WIFI_IOT_GPIO_VALUE1 : WIFI_IOT_GPIO_VALUE0;
+    ground_level_right = (right1 >= 5) ? WIFI_IOT_GPIO_VALUE1 : WIFI_IOT_GPIO_VALUE0;
+    printf("Ground calibrated: L=%d R=%d\r\n", (int)ground_level_left, (int)ground_level_right);
+#else
+    printf("Edge guard disabled for floor test\r\n");
+#endif
 }
 
 static void car_patrol(void)
 {
-    int left_edge; float dist, dist_l, dist_r;
+    int left_edge = 0; float dist, dist_l, dist_r;
     printf("Table patrol start\r\n"); calibrate_ground(); regress_middle(); usleep(100000);
     while (1) {
         if (edge_detected(&left_edge)) {
