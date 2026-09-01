@@ -94,7 +94,11 @@ void USART1_IRQHandler(void)                	//串口1中断服务程序: 逐字节解析双核
 		USART_RX_BUF[USART_RX_COUNT] = Res;
 
 		if(USART_RX_BUF[0] == 0xFC)       //寻找帧头
+		{
 			USART_RX_COUNT++;
+			if(USART_RX_COUNT >= 6)        //保护: 不该发生(第6字节若非0xFD会整体丢弃)
+				USART_RX_COUNT = 0;
+		}
 		else
 			USART_RX_COUNT = 0;           //不是帧头, 重新找
 
