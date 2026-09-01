@@ -83,16 +83,16 @@ void car_backward(void)
     stm32motor_control(-60, -60);
 }
 
-// 左转弧线（两轮同向，明显差速；不会原地自旋）
+// 左转弧线：降低转向冲击，仍保持明显方向差
 void car_left(void)
 {
-    stm32motor_control(40, 120);
+    stm32motor_control(50, 90);
 }
 
 // 右转弧线
 void car_right(void)
 {
-    stm32motor_control(120, 40);
+    stm32motor_control(90, 50);
 }
 
 // 缓弧左转前进（循迹用差速）
@@ -214,13 +214,13 @@ static void regress_middle(void)     // 回中
 /*==================== 桌面巡逻逻辑 ====================*/
 #define EDGE_CHECK_MS 60
 #define OBSTACLE_CM 20.0f
-#define TURN_90_MS 1400        // 实测700ms约45°，线性标定1400ms约90°
+#define TURN_90_MS 1400        // 实测700ms约45°，1400ms约90°
 #define BACK_MS 300
-#define SCAN_GAP_MS 80
+#define SCAN_GAP_MS 300        // 舵机回中/转向后留足稳定时间，避免旧回波干扰
 #define EDGE_STOP_MS 150
-#define ESCAPE_FORWARD_MS 1200 // 转向后强制前进，脱离原障碍判定区
-#define REARM_CLEAR_CM 25.0f   // 前方重新超过25cm才允许识别下一个障碍
-#define REARM_CLEAR_COUNT 3    // 连续3次畅通才解除障碍锁存
+#define ESCAPE_FORWARD_MS 2000 // 转向后强制直行，确保离开原障碍方向
+#define REARM_CLEAR_CM 25.0f
+#define REARM_CLEAR_COUNT 3
 
 static int edge_detected(int *left_edge)
 {
@@ -275,27 +275,10 @@ static void calibrate_ground(void)
 #endif
 }
 
-static void drive_forward_for(uint32_t duration_ms)
-{
-    uint32_t elapsed = 0;
-    int dummy;
-    while (elapsed < duration_ms) {
-        car_forward();
-        usleep(EDGE_CHECK_MS * 1000);
-        elapsed += EDGE_CHECK_MS;
-        if (edge_detected(&dummy)) {
-            car_stop();
-            break;
-        }
-    }
-}
-
 static void car_patrol(void)
 {
     int left_edge = 0;
     float dist, dist_l, dist_r;
-    uint8_t obstacle_armed = 1;
-    uint8_t clear_count = 0;
 
     printf("Table patrol start\r\n");
     calibrate_ground();
@@ -312,32 +295,10 @@ static void car_patrol(void)
             usleep(100000);
             (void)spin_for(left_edge ? 0 : 1, TURN_90_MS);
             regress_middle();
-            obstacle_armed = 0;
-            clear_count = 0;
-            drive_forward_for(ESCAPE_FORWARD_MS);
             continue;
         }
 
         dist = get_distance_cm();
-
-        /* 转弯后锁定原障碍：只有连续3次前方>25cm才允许识别下一个障碍。
-         * 同一面墙不会造成连续转向/原地打转。 */
-        if (!obstacle_armed) {
-            if (dist > REARM_CLEAR_CM) {
-                if (++clear_count >= REARM_CLEAR_COUNT) {
-                    obstacle_armed = 1;
-                    clear_count = 0;
-                    printf("PATH CLEAR -> obstacle detector rearmed\r\n");
-                }
-                car_forward();
-            } else {
-                clear_count = 0;
-                car_stop();  // 仍未脱离原墙：安全停车，绝不再次转圈
-            }
-            usleep(EDGE_CHECK_MS * 1000);
-            continue;
-        }
-
         if (dist < OBSTACLE_CM) {
             printf("OBSTACLE %dcm -> BRAKE, SCAN\r\n", (int)dist);
             car_stop();
@@ -348,14 +309,13 @@ static void car_patrol(void)
             usleep(SCAN_GAP_MS * 1000);
             dist_r = scan_side_distance(0);
             regress_middle();
+            usleep(SCAN_GAP_MS * 1000);
             printf("SCAN L=%d R=%d\r\n", (int)dist_l, (int)dist_r);
-
-            obstacle_armed = 0;  // 从现在起锁定，转后不可被同一障碍再次触发
-            clear_count = 0;
 
             if (dist_l < OBSTACLE_CM && dist_r < OBSTACLE_CM) {
                 printf("BOTH BLOCKED -> U-TURN 180\r\n");
                 (void)spin_for(1, TURN_90_MS);
+                usleep(100000);
                 (void)spin_for(1, TURN_90_MS);
             } else if (dist_l >= dist_r) {
                 printf("TURN LEFT 90\r\n");
@@ -365,8 +325,12 @@ static void car_patrol(void)
                 (void)spin_for(0, TURN_90_MS);
             }
 
+            car_stop();
             regress_middle();
-            drive_forward_for(ESCAPE_FORWARD_MS);
+            usleep(SCAN_GAP_MS * 1000);
+            printf("TURN DONE -> FORWARD\r\n");
+            car_forward();
+            usleep(2000000);
             continue;
         }
 

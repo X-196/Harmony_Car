@@ -65,9 +65,16 @@ void USART1_IRQHandler(void)
     if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
     {
         res = USART_ReceiveData(USART1);
-        if (res == 0xFC) USART_RX_COUNT = 0;
-        if (USART_RX_COUNT < USART_REC_LEN)
+        if (USART_RX_COUNT == 0)
+        {
+            if (res == 0xFC)
+                USART_RX_BUF[USART_RX_COUNT++] = res;
+        }
+        else if (USART_RX_COUNT < USART_REC_LEN)
+        {
+            /* 已经锁定帧头后，帧内的0xFC只能是数据，不能重新同步 */
             USART_RX_BUF[USART_RX_COUNT++] = res;
+        }
 
         if (USART_RX_COUNT == USART_REC_LEN)
         {
