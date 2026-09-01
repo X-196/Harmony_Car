@@ -33,8 +33,8 @@
  * 前后两条带安装方向可能相反。烧录后若转向灯亮错半边:
  *   前/后只有一条亮错 -> 只把对应宏取反(1<->0)
  *   前后都亮错(亮了右侧) -> 两个宏都取反 */
-#define FRONT_STRIP_LEFT_IS_LOW   1   // 前灯带: 左半边 = 1~3 号灯
-#define REAR_STRIP_LEFT_IS_LOW    1   // 后灯带: 左半边 = 1~3 号灯
+#define FRONT_STRIP_LEFT_IS_LOW   0   // 前灯带: 左半边 = 4~6 号灯(实机标定: 初始 1 时左右反, 2026-09-01 翻转)
+#define REAR_STRIP_LEFT_IS_LOW    0   // 后灯带: 左半边 = 4~6 号灯(实机标定: 与前带同翻)
 
 /* 转向灯颜色: 琥珀色 */
 #define AMBER_R 255
