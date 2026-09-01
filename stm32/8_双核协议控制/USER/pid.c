@@ -99,6 +99,14 @@ int Rs_To_CPR(float rads)
     return CRP;
 }
 
+/* 轮间标定系数（直线补偿）：两电机/编码器/轮径有常值偏差，速度环锁定“脉冲数相等”
+ * 但实际轮速不等 → 走弧线。给右轮目标乘 TRIM 修正。
+ * 调法（烧录后看 3s 前进的漂移方向）：
+ *   车向右漂 = 右轮慢 → TRIM_B 略大于 1（如 1.03）
+ *   车向左漂 = 右轮快 → TRIM_B 略小于 1（如 0.97）
+ *   每次调 ±0.02，两三轮即可调直 */
+#define TRIM_B 1.03f
+
 /**************************************************************************
 函数功能：系统闭环控制函数（每 OverflowTime=100ms 由 SysTick 调用一次）
 说明：1. 消费双核协议帧 -> 恢复带符号目标转速 -> 更新车灯状态
@@ -141,9 +149,9 @@ void System_Control(void)
     L_coder = Read_Encoder(2);
     R_coder = Read_Encoder(3);
 
-    // 计算目标速度(圈/s)对应的编码器脉冲数
+    // 计算目标速度(圈/s)对应的编码器脉冲数（右轮乘标定系数补直线）
     TageA = Rs_To_CPR(Target_MotorA);
-    TageB = Rs_To_CPR(Target_MotorB);
+    TageB = Rs_To_CPR(Target_MotorB * TRIM_B);
 
     // 速度闭环：PID 计算两轮 PWM
     Motor_A = Incremental_PI_A(L_coder, TageA);
