@@ -37,7 +37,17 @@ int Incremental_PI_A(int Encoders_A, int Target_A)
     static int Integral_A = 0;
     static float Error_prev_A = 0;
     float MaxIntegral, MinIntegral;
-    float Error_A = (float)(Target_A - Encoders_A);   // 偏差
+    float Error_A;
+
+    /* 目标为0时立即清除增量PID历史量，停止轮不能保留前进PWM */
+    if (Target_A == 0)
+    {
+        Pwm_A = 0;
+        Integral_A = 0;
+        Error_prev_A = 0;
+        return 0;
+    }
+    Error_A = (float)(Target_A - Encoders_A);   // 偏差
 
     Integral_A += (int)Error_A;                        // 积分项累加
     MaxIntegral = (float)(7199 / Velocity_KI);
@@ -68,7 +78,17 @@ int Incremental_PI_B(int Encoders_B, int Target_B)
     static int Integral_B = 0;
     static float Error_prev_B = 0;
     float MaxIntegral, MinIntegral;
-    float Error_B = (float)(Target_B - Encoders_B);
+    float Error_B;
+
+    /* 目标为0时立即清除增量PID历史量 */
+    if (Target_B == 0)
+    {
+        Pwm_B = 0;
+        Integral_B = 0;
+        Error_prev_B = 0;
+        return 0;
+    }
+    Error_B = (float)(Target_B - Encoders_B);
 
     Integral_B += (int)Error_B;
     MaxIntegral = (float)(7199 / Velocity_KI);
