@@ -220,9 +220,11 @@ static void regress_middle(void)     // 回中
 /*==================== 桌面巡逻逻辑 ====================*/
 
 #define EDGE_CHECK_MS   30      // 桌沿检测周期
-#define OBSTACLE_CM     25.0f   // 前方障碍判定距离
+#define OBSTACLE_CM     15.0f   // 前方障碍判定距离（实测 25 太早触发，改 15）
 #define SPIN_MS         700     // 原地转一次的时长（约 90°，实车可调）
 #define BACK_MS         300     // 探到桌先后倒车时长
+#define PUSH_MS         500     // 避障转向后强制前进时长：离开障碍判定区，避免连环转向循环
+#define RETREAT_LIMIT   3       // 连续避障次数上限：超过则掉头 180°（防角落卡死循环）
 
 /* 桌沿确认：连续两次读数都"非地面电平"才认定（30ms 间隔，抗噪声） */
 static int edge_detected(int *left_edge)
@@ -278,12 +280,13 @@ static void calibrate_ground(void)
 /*
  * 桌面巡逻主任务：
  *   前进(30ms一查桌沿) -> [桌沿] 停/倒车/反向转  -> 继续
- *                       -> [障碍] 停/扫描/向空侧转 -> 继续
+ *                       -> [障碍] 停/扫描/向空侧转 -> 强制前进一段 -> 继续
  */
 static void car_patrol(void)
 {
     int left_edge;
     float dist, dist_l, dist_r;
+    uint8_t retreat_cnt = 0;       // 连续避障计数（防角落卡死）
 
     printf("Table patrol start\r\n");
     calibrate_ground();
@@ -320,7 +323,15 @@ static void car_patrol(void)
             regress_middle();       // 回中
             printf("L=%dcm R=%dcm\r\n", (int)dist_l, (int)dist_r);
 
-            if (dist_l < OBSTACLE_CM && dist_r < OBSTACLE_CM) {
+            /* 连续避障计数：转完又立刻见障碍说明被堵住（角落），
+             * 超过上限直接掉头 180°，避免原地转圈 */
+            retreat_cnt++;
+            if (retreat_cnt >= RETREAT_LIMIT) {
+                printf("Blocked! U-turn\r\n");
+                (void)spin_for(1, SPIN_MS);
+                (void)spin_for(1, SPIN_MS);
+                retreat_cnt = 0;
+            } else if (dist_l < OBSTACLE_CM && dist_r < OBSTACLE_CM) {
                 // 两侧都堵：掉头（两个 90°）
                 (void)spin_for(1, SPIN_MS);
                 (void)spin_for(1, SPIN_MS);
@@ -329,10 +340,26 @@ static void car_patrol(void)
             } else {
                 (void)spin_for(0, SPIN_MS);   // 右侧更空 -> 右转
             }
+
+            /* 关键：转向后强制前进 PUSH_MS——若不前进，下一轮测距仍在
+             * 障碍阈值内会再次触发转向，转了又转=原地转圈。
+             * 前进期间照常查桌沿（探到立即中断交给外层） */
+            {
+                uint32_t t = 0;
+                int dummy;
+                while (t < PUSH_MS) {
+                    car_forward();
+                    usleep(EDGE_CHECK_MS);
+                    t += EDGE_CHECK_MS;
+                    if (edge_detected(&dummy))
+                        break;     // 前进途中探到桌沿：立即中断，外层处理
+                }
+            }
             continue;
         }
 
         /*---- 3. 正常巡航 ----*/
+        retreat_cnt = 0;           // 巡航正常=脱离障碍区，清计数
         car_forward();              // 每周期重发帧（坏帧下一周期即纠正）
         usleep(EDGE_CHECK_MS);
     }
