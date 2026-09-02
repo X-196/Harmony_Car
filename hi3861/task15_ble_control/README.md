@@ -3,8 +3,8 @@
 **最终架构（已重构）**：本车 Hi3861 旧版 UART HAL 在 UART1（蓝牙）与 UART2（STM32）同时启用时会导致 UART2 失效。因此当前工程彻底不调用 `UartInit(UART2)`：
 
 - UART1 硬件串口：GPIO0/1，9600，接蓝牙模块
-- GPIO11 软件 UART TX：115200 8N1，接 STM32 PA10/RX
-- GPIO12 不再用于 UART2 RX（本项目只需要向 STM32 单向发送控制帧）
+- GPIO11 软件 UART TX：仍使用板上已经焊死的 `GPIO11 → STM32 PA10/RX` 线路，只改变 Hi3861 内部驱动方式，不改硬件
+- GPIO12 焊线保持原样即可；本程序不读取 STM32 回传，不需要拆线
 - `motor_tx_task` 独立发送目标帧，`ble_rx_task` 只接收手机命令，互不阻塞
 
 这不是任务指导的原始实现，而是针对本车实测 UART1/UART2 冲突重建的可运行方案。
@@ -26,7 +26,7 @@ STM32: PID 闭环驱动电机 + 按帧渲染转向灯/倒车灯
 | Hi3861 GPIO_11（软件 UART TX） | STM32 PA10（USART1_RX） |
 | Hi3861 GND | STM32 GND |
 
-> 只需接收手机命令并向 STM32 发控制帧，因此 GPIO12/STM32 PA9 回传线不是必需的；保留共地。
+> 板上线路焊死不需要改动：GPIO11 本来就连接 STM32 PA10。所谓“软件 UART”只是程序把同一 GPIO11 改为普通 GPIO 后输出 115200 串口波形；GPIO12 保持焊接不动。
 
 ## 命令表
 
