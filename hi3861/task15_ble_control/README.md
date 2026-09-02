@@ -1,10 +1,15 @@
 # 蓝牙遥控小车（task15_ble_control / 13.0_BLE_Control）
 
-**扩展应用**（U+ 平台无对应任务，自创综合）：把**任务9 的蓝牙透传**（UART1 + JDY-16）接到**任务24 的双核运动协议**（UART2 → STM32）上，手机蓝牙 App 单字符命令遥控小车。
+**最终架构（已重构）**：本车 Hi3861 旧版 UART HAL 在 UART1（蓝牙）与 UART2（STM32）同时启用时会导致 UART2 失效。因此当前工程彻底不调用 `UartInit(UART2)`：
 
-> 命令设计沿用手机九宫格：`W/A/S/D` 方向、`O` 停止（圆心）、`I/K` 两档速度。兼容大小写；回车/换行/空格忽略（适配蓝牙调试器的"发送新行"选项）。
+- UART1 硬件串口：GPIO0/1，9600，接蓝牙模块
+- GPIO11 软件 UART TX：115200 8N1，接 STM32 PA10/RX
+- GPIO12 不再用于 UART2 RX（本项目只需要向 STM32 单向发送控制帧）
+- `motor_tx_task` 独立发送目标帧，`ble_rx_task` 只接收手机命令，互不阻塞
 
-## 链路
+这不是任务指导的原始实现，而是针对本车实测 UART1/UART2 冲突重建的可运行方案。
+
+> 命令设计沿用手机按键：`W/A/S/D` 方向、`O` 停止、`I/K` 速度档；兼容 B/C/E/F 备用映射。
 
 ```
 手机蓝牙App ──BLE──> JDY-16 ──UART1 (GPIO_0=TX/GPIO_1=RX, 9600)──> Hi3861
@@ -13,6 +18,15 @@ Hi3861 ──UART2 (GPIO_11=TX/GPIO_12=RX, 115200)──> STM32 (stm32/8_双核�
         V2 10字节帧: FC|02|0A|左轮int16LE|右轮int16LE|seq|XOR|FD
 STM32: PID 闭环驱动电机 + 按帧渲染转向灯/倒车灯
 ```
+
+| 链路 | 连接 |
+|---|---|
+| 蓝牙模块 TX | Hi3861 GPIO_1（UART1_RXD） |
+| 蓝牙模块 RX | Hi3861 GPIO_0（UART1_TXD） |
+| Hi3861 GPIO_11（软件 UART TX） | STM32 PA10（USART1_RX） |
+| Hi3861 GND | STM32 GND |
+
+> 只需接收手机命令并向 STM32 发控制帧，因此 GPIO12/STM32 PA9 回传线不是必需的；保留共地。
 
 ## 命令表
 
@@ -68,18 +82,17 @@ STM32 侧（任务24 固件，**无需重烧**）有 **500ms 无有效帧自动�
 ## 编译与烧录
 
 1. 上传 `13.0_BLE_Control/` 到虚拟机 `applications/sample/wifi-iot/app/`，改 app/BUILD.gn 指向 `13.0_BLE_Control:ble_control`（见 `reference/app_BUILD.gn`）
-2. `python3 build.py wifiiot` → 产物拷回 `output/Hi3861_wifiiot_app_allinone.bin`（最新顺序修复版 md5 `166ad037e41801a974bc9f12e8262338`）
+2. `python3 build.py wifiiot` → 产物拷回 `output/Hi3861_wifiiot_app_allinone.bin`（软件 UART 重构版 md5 `0de992bd4b5246e23beb9731f07b314a`）
 3. HiBurn：COM 选 CH340（COM9）、波特率 2000000、选 allinone.bin、勾 Auto burn → Connect → 按复位键；烧完取消 Auto burn
 4. **STM32 侧不用重烧**：沿用 `stm32/8_双核协议控制/` 固件（V2 帧解析 + PID + 车灯）
 
 ## 联调步骤（实测要点）
 
-1. 小车**电池供电**（USB 只够芯片+灯带，电机不动——见记忆/实测）；串口开关拨到 3861 端烧录
-2. 烧完拨回运行，手机装 `tools/_bt_debug/蓝牙调试器xnj.lazydog.btcontroller.apk`
-3. 搜蓝牙设备：**认实际广播名**（本车模块改名过，如 `Gamer_0o0`，不叫 JDY-16）
-4. 连接后进"键盘/按钮"模式，把按键映射成单字符：`W/A/S/D/O/I/K`
-5. 串口日志（115200）应看到 `BLE control ready: W/A/S/D/O + I/K`，每按一键打印 `CMD W: forward 100` 等
-6. 按 `W` 走直线、`A/D` 原地转（转向灯闪）、`S` 倒车（倒车灯）、`O` 刹停（刹车灯）、`K` 后再 `W` 明显变快
+1. 小车**电池供电**（USB 只够芯片+灯带，电机不动——见记忆/实测）；确认 STM32 已烧任务24版；串口开关拨到 3861 端烧录
+2. 烧完拨回运行，手机连接实际蓝牙广播名
+3. 按键映射为：前 `W`、后 `S`、左 `A`、右 `D`、停 `O`；方向按钮松开发送留空
+4. 串口日志应看到 `BLE control ready: W/A/S/D/O + I/K`，按键时打印 `CMD W: forward 100`
+5. 按 `W` 后观察 STM32 车灯：前白后暗红；按 `O` 停止
 
 ## 常见问题
 
