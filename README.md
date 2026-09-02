@@ -49,8 +49,16 @@ Harmony_Car/
 │   ├── task12_sht20/       # 任务12：I2C 读 SHT20 温湿度（信号量同步）
 │   │   ├── 8.0_Sht20/           # 工程（Sht20.c+hal_bsp_sht20）
 │   │   └── reference/       # app/BUILD.gn 参考
-│   └── task13_ap3216c/     # 任务13：I2C 读 AP3216C 光照/接近/红外（三合一传感器）
-│       ├── 9.0_Ap3216c/         # 工程（Ap3216c.c+hal_bsp_ap3216c）
+│   ├── task13_ap3216c/     # 任务13：I2C 读 AP3216C 光照/接近/红外（三合一传感器）
+│   │   ├── 9.0_Ap3216c/         # 工程（Ap3216c.c+hal_bsp_ap3216c）
+│   │   └── reference/       # app/BUILD.gn 参考
+│   ├── task14_uart_correspondence/  # 任务24：双核运动协议（UART2→STM32 V2 帧 + 桌面巡逻）
+│   │   ├── 12.0_UART_Correspondence/   # 工程主源码
+│   │   ├── output/          # 编译产物 allinone.bin
+│   │   └── reference/       # app/BUILD.gn 参考
+│   └── task15_ble_control/  # 扩展：蓝牙遥控小车（UART1 蓝牙收 W/A/S/D/O/I/K + UART2 发 V2 帧）
+│       ├── 13.0_BLE_Control/    # 工程主源码
+│       ├── output/          # 编译产物 allinone.bin
 │       └── reference/       # app/BUILD.gn 参考
 └── stm32/                   # STM32 侧 Keil MDK5 工程
     ├── 02_串口收发打印/      # 任务19：串口收发 + WS2812 炫彩灯效果
@@ -142,6 +150,13 @@ Harmony_Car/
   - 单任务每 1s 采集 **五路传感器**（AP3216C 三路 + SHT20 温湿度 + HC-SR04 距离 + TCRT 红外对管 L/R），串口 ASCII 打印 + **OLED 仪表盘一屏全显**（6x8 字体 8 行）
   - 复用任务11 OLED、任务12 SHT20 驱动，超声波/红外用 GPIO（任务6/8 同款读法）
   - ✅ 编译成功（仪表盘版 md5 `d60b40e7ebe5e2a537f3de16409e4c5b`），AP3216C 数据已实机验证
+- **任务24 · task14_uart_correspondence**：系统通信协议（双核综合，Hi3861 ⇄ STM32）
+  - V2 10 字节帧 `FC|02|0A|左int16|右int16|seq|XOR|FD`（UART2 115200），STM32 侧 PID 闭环 + 车灯渲染，详见 `hi3861/task14_uart_correspondence/README.md` 与 `stm32/8_双核协议控制/README.md`
+- **扩展 · task15_ble_control**：**手机蓝牙遥控小车**（自创综合，U+ 无对应任务）
+  - 任务9 蓝牙（UART1/9600/JDY-16）+ 任务24 双核协议拼合：手机发 `W/A/S/D/O/I/K` 单字符 → Hi3861 case 分发 → UART2 发 V2 帧控 STM32
+  - `heartbeat_task` 每 150ms 重发速度帧，匹配 STM32 500ms 无帧自动停车保护；STM32 无需重烧
+  - ✅ 编译成功（780104 字节，md5 `36a4fe87b788548eca077020208662b2`），烧录联调见 `hi3861/task15_ble_control/README.md`
+
 ## 环境与工具链
 
 | 工具 | 用途 |
@@ -180,6 +195,7 @@ Harmony_Car/
 > - [`hi3861/task11_i2c_ssd1306/README.md`](hi3861/task11_i2c_ssd1306/README.md) —— 任务11 I2C 驱动 OLED 显示字符串
 > - [`hi3861/task12_sht20/README.md`](hi3861/task12_sht20/README.md) —— 任务12 I2C 读 SHT20 温湿度 + 信号量
 > - [`hi3861/task13_ap3216c/README.md`](hi3861/task13_ap3216c/README.md) —— 任务13 I2C 读 AP3216C 光照/接近/红外三合一传感器
+> - [`hi3861/task15_ble_control/README.md`](hi3861/task15_ble_control/README.md) —— 扩展：手机蓝牙遥控小车（命令表/心跳设计/联调步骤）
 > - [`stm32/README.md`](stm32/README.md) —— STM32 任务总览（任务19 串口灯效 / 任务20 NFC 读卡 / 任务21~23 电机控制）
 > - [`stm32/4_PWM驱动电机/README.md`](stm32/4_PWM驱动电机/README.md) —— 任务21 PWM 驱动电机
 > - [`stm32/5_Timer编码器测速/README.md`](stm32/5_Timer编码器测速/README.md) —— 任务22 TIMER 编码器测速
