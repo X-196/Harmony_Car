@@ -36,6 +36,7 @@ STM32 侧（任务24 固件，**无需重烧**）有 **500ms 无有效帧自动�
 2. **命令即发**：收到命令立即发一帧，不等心跳周期
 3. **单线程发送**：蓝牙接收和 UART2 心跳由同一个任务完成，不再由两个任务并发调用 `UartWrite`，避免调度/并发导致控制帧时序异常
 4. 串口 0 printf（命令回显）与 UART2 控制帧分走两个串口，互不干扰
+5. **初始化顺序**：必须先初始化 UART2（STM32，115200），再初始化 UART1（蓝牙，9600）。隔离测试证明旧版 Hi3861 UART HAL 在反向顺序时会导致 UART2 不出有效波形。
 
 > 走停由手机 App 控制：按下方向键发动作（按住期间心跳维持），松开发 `O`（或按停）停车。
 
@@ -67,7 +68,7 @@ STM32 侧（任务24 固件，**无需重烧**）有 **500ms 无有效帧自动�
 ## 编译与烧录
 
 1. 上传 `13.0_BLE_Control/` 到虚拟机 `applications/sample/wifi-iot/app/`，改 app/BUILD.gn 指向 `13.0_BLE_Control:ble_control`（见 `reference/app_BUILD.gn`）
-2. `python3 build.py wifiiot` → 产物拷回 `output/Hi3861_wifiiot_app_allinone.bin`（**已编译**：md5 `93e185524381d64f73c426565e98545b`）
+2. `python3 build.py wifiiot` → 产物拷回 `output/Hi3861_wifiiot_app_allinone.bin`（最新顺序修复版 md5 `166ad037e41801a974bc9f12e8262338`）
 3. HiBurn：COM 选 CH340（COM9）、波特率 2000000、选 allinone.bin、勾 Auto burn → Connect → 按复位键；烧完取消 Auto burn
 4. **STM32 侧不用重烧**：沿用 `stm32/8_双核协议控制/` 固件（V2 帧解析 + PID + 车灯）
 

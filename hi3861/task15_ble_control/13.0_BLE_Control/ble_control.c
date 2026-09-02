@@ -169,7 +169,22 @@ static void ble_control(void)
 
     GpioInit(); // GPIO功能初始化
 
-    /* UART1：蓝牙 JDY-16 透传（9600）——自检版跳过,排除对UART2干扰 */
+    /* UART2：与 STM32 通信（115200）。必须先初始化 UART2：
+     * Hi3861 旧版 UART HAL 初始化 UART1 时会重置共享串口控制状态；
+     * 若先 UART1 后 UART2，UART2 看似初始化成功但实际不出有效波形。
+     */
+    IoSetFunc(WIFI_IOT_IO_NAME_GPIO_11, WIFI_IOT_IO_FUNC_GPIO_11_UART2_TXD);
+    IoSetFunc(WIFI_IOT_IO_NAME_GPIO_12, WIFI_IOT_IO_FUNC_GPIO_12_UART2_RXD);
+    WifiIotUartAttribute uart_attr2 = {
+        .baudRate = 115200,
+        .dataBits = 8,
+        .stopBits = 1,
+        .parity = 0,
+    };
+    UartInit(WIFI_IOT_UART_IDX_2, &uart_attr2, NULL);
+
+    /* UART1：蓝牙 JDY-16 透传（9600）。放在 UART2 后初始化，避免旧 HAL
+     * 初始化 UART1 时重置 UART2 的共享控制寄存器。 */
 #if !SELFTEST_AUTODRIVE
     IoSetFunc(WIFI_IOT_IO_NAME_GPIO_0, WIFI_IOT_IO_FUNC_GPIO_0_UART1_TXD);
     IoSetFunc(WIFI_IOT_IO_NAME_GPIO_1, WIFI_IOT_IO_FUNC_GPIO_1_UART1_RXD);
@@ -181,17 +196,6 @@ static void ble_control(void)
     };
     UartInit(WIFI_IOT_UART_IDX_1, &uart_attr1, NULL);
 #endif
-
-    /* UART2：与 STM32 通信（115200） */
-    IoSetFunc(WIFI_IOT_IO_NAME_GPIO_11, WIFI_IOT_IO_FUNC_GPIO_11_UART2_TXD);
-    IoSetFunc(WIFI_IOT_IO_NAME_GPIO_12, WIFI_IOT_IO_FUNC_GPIO_12_UART2_RXD);
-    WifiIotUartAttribute uart_attr2 = {
-        .baudRate = 115200,
-        .dataBits = 8,
-        .stopBits = 1,
-        .parity = 0,
-    };
-    UartInit(WIFI_IOT_UART_IDX_2, &uart_attr2, NULL);
 
 #if SELFTEST_AUTODRIVE
     /* 自检：绕开蓝牙/心跳/互斥，上电持续发前进帧，复刻任务14单线程发帧 */
