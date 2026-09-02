@@ -9,8 +9,8 @@
 
 /* QST先锋号 任务24：系统通信协议（双核综合）
  *
- * Hi3861(主核) --UART 115200-8N1--> STM32(从核, 本工程)
- *   6字节帧: 0xFC | 左方向 | 左速度(圈/s×100) | 右方向 | 右速度 | 0xFD
+ * Hi3861(主核) --GPIO11 软件UART 9600-8N1--> STM32(从核, 本工程)
+ *   V2 10字节帧: 0xFC | 0x02 | 0x0A | 左轮int16LE | 右轮int16LE | seq | XOR | 0xFD
  *
  * 本工程职责:
  *   1. USART1 中断解析协议帧(帧头0xFC找齐到帧尾0xFD为一帧)
@@ -134,7 +134,7 @@ int main(void)
 	RCC->CSR |= 1 << 24;                  // 清除复位标志
 	Stm32_Clock_Init(9);                  // 外部时钟8Mhz 9倍频 = 72MHz
 	MY_NVIC_PriorityGroupConfig(2);       // 中断优先级分组
-	uart_init(115200);                    // 串口初始化(与Hi3861 UART2 通信, 115200-8-N-1)
+	uart_init(9600);                      // 串口初始化(与Hi3861 GPIO11 软件UART通信, 9600-8-N-1)
 	JTAG_Set(JTAG_SWD_DISABLE);           // 关闭JTAG接口
 	JTAG_Set(SWD_ENABLE);                 // 打开SWD接口
 

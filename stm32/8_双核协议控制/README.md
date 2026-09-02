@@ -66,7 +66,7 @@ FC | 02 | 0A | 左轮低字节 | 左轮高字节 | 右轮低字节 | 右轮高�
 1. **接线**：Hi3861 GPIO_11(TX) → STM32 PA10(RX)、GPIO_12(RX) ← PA9(TX)、GND 共地（两块板都由小车供电时只需 TX→RX 两根线）
 2. Keil 打开 `USER/Template.uvprojx` 编译（0 Error）→ ST-Link SWD 下载到小车主板；HiBurn 把 `output/Hi3861_wifiiot_app_allinone.bin` 烧到 3861
 3. 上电（**跑动功能需电池供电**，USB 只够逻辑部分）后小车自动循环：前进 → 左转（左灯闪）→ 右转（右灯闪）→ 后退（倒车灯）→ 停止（灯灭）
-4. STM32 串口助手（CH340，115200）可见每帧解析结果：`Frame: A=1.00 B=1.00 led=1`
+4. STM32 串口助手（CH340，9600）可见每帧解析结果：`Frame: A=1.00 B=1.00 led=1`（9600 分时版起 USART1 降为 9600，与 Hi3861 GPIO11 软件 UART 匹配）
 
 ## 实机验证（2026-09-01）✅
 

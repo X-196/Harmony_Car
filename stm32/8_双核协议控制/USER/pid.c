@@ -161,7 +161,7 @@ void System_Control(void)
         memset((void*)CAR_buff, 0, sizeof(CAR_buff));    //清除 等待获取下一帧
 
         /* 只在目标变化时打印一次（不在中断里高频 printf：
-         * 115200 下一行约 4ms 阻塞，会丢 SysTick 节拍 -> 采样窗口抖动 -> 车顿挫）*/
+         * 9600 下一行约 26ms 阻塞，高频打印会丢 SysTick 节拍 -> 采样窗口抖动 -> 车顿挫）*/
         {
             static float lastA = 0, lastB = 0;
             static u8  lastLed = 0xFF;
