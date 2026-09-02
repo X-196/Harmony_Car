@@ -14,10 +14,14 @@
  *   B=后退  C=右转  E=停止  F=左转
  *
  * 可靠性设计（对应 STM32 侧 500ms 无帧自动停车）：
- *   1. 心跳重发：每 150ms 重发一次当前速度帧——单帧丢帧不会导致中途停车
- *      （STM32 收帧刷新 no_frame_ticks，5×100ms 内必须有新帧）
- *   2. 命令改变立即发一帧，不等心跳周期，手机上方向键按下去马上响应
- *   3. 串口0 printf 与 UART2 控制帧分走两个串口，互不干扰
+ *   1. 心跳重发：每 100ms 无条件重发当前目标帧——保证 STM32 始终有有效帧，
+ *      不会因单帧丢失或间隙触发 500ms 无帧自动停车。
+ *   2. 命令超时自动停：按 W/A/D/S 等运动命令后，若 2 秒内无新命令则自动停车——
+ *      即使手机 App 松手不发停止键，车也会停，不会一直跑。
+ *   3. 命令改变立即发一帧，不等心跳周期，方向键按下马上响应。
+ *   4. 发帧用【局部缓冲 + 互斥锁】：心跳线程与命令线程并发调用 stm32motor_control，
+ *      若共用全局发送缓冲会互相覆盖、破坏帧导致 STM32 校验失败丢弃（此前的 bug），
+ *      故每帧用私有局部数组，并用互斥锁串行化 UART2 发送。
  *
  * 车灯全部由 STM32 从核按帧自动渲染（左转闪左转向灯/后退倒车灯等），
  * 本工程不关心灯光——双核分工的收益。
@@ -34,18 +38,28 @@
 #include "hi_uart.h"
 #include "wifiiot_gpio_ex.h"
 
-/*==================== UART2 -> STM32 运动控制协议 ====================*/
+/* 命令超时自动停车：2s @ 100Hz tick */
+#define CMD_TIMEOUT_TICKS 200
 
-uint8_t uart_sendbuf[20];
+static osMutexId_t uart2_mutex = NULL;      /* 串行化 UART2 发送（心跳+命令线程并发） */
+
+/* 遥控状态与动作 */
+static int speed_level = 100;                /* 当前速度档（I=100 / K=150），默认中速 */
+static volatile int cur_a = 0, cur_b = 0;    /* 当前锁存的左右轮目标（心跳重发/超时判断用） */
+static volatile uint32_t last_cmd_tick = 0;  /* 最近一次有效命令的 tick（超时停车用） */
+
+/*==================== UART2 -> STM32 运动控制协议 ====================*/
 
 /*
  * 函数功能：发送至 STM32 的 V2 运动控制帧
  * 参数    ：左右轮有符号速度 ×100（单位 0.01 圈/s），范围 -150~150
+ * 说明    ：每帧用私有局部缓冲，互斥锁串行化发送，避免多线程并发写入同一缓冲。
  */
 void stm32motor_control(int motorA, int motorB)
 {
     static uint8_t seq = 0;
     uint8_t checksum;
+    uint8_t buf[10];                 /* 私有帧缓冲：避免心跳/命令线程相互覆盖 */
 
     if (motorA > 150) motorA = 150;
     if (motorA < -150) motorA = -150;
@@ -53,30 +67,29 @@ void stm32motor_control(int motorA, int motorB)
     if (motorB < -150) motorB = -150;
 
     // FC | version | length | left int16 LE | right int16 LE | seq | xor | FD
-    uart_sendbuf[0] = 0xFC;
-    uart_sendbuf[1] = 0x02;
-    uart_sendbuf[2] = 0x0A;
-    uart_sendbuf[3] = (uint8_t)(motorA & 0xFF);
-    uart_sendbuf[4] = (uint8_t)((motorA >> 8) & 0xFF);
-    uart_sendbuf[5] = (uint8_t)(motorB & 0xFF);
-    uart_sendbuf[6] = (uint8_t)((motorB >> 8) & 0xFF);
-    uart_sendbuf[7] = seq++;
-    checksum = uart_sendbuf[1] ^ uart_sendbuf[2] ^ uart_sendbuf[3] ^
-               uart_sendbuf[4] ^ uart_sendbuf[5] ^ uart_sendbuf[6] ^ uart_sendbuf[7];
-    uart_sendbuf[8] = checksum;
-    uart_sendbuf[9] = 0xFD;
-    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 10);
+    buf[0] = 0xFC;
+    buf[1] = 0x02;
+    buf[2] = 0x0A;
+    buf[3] = (uint8_t)(motorA & 0xFF);
+    buf[4] = (uint8_t)((motorA >> 8) & 0xFF);
+    buf[5] = (uint8_t)(motorB & 0xFF);
+    buf[6] = (uint8_t)((motorB >> 8) & 0xFF);
+    buf[7] = seq++;
+    checksum = buf[1] ^ buf[2] ^ buf[3] ^
+               buf[4] ^ buf[5] ^ buf[6] ^ buf[7];
+    buf[8] = checksum;
+    buf[9] = 0xFD;
+
+    if (uart2_mutex != NULL) osMutexAcquire(uart2_mutex, osWaitForever);
+    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)buf, 10);
+    if (uart2_mutex != NULL) osMutexRelease(uart2_mutex);
 }
-
-/*==================== 遥控状态与动作 ====================*/
-
-static int speed_level = 100;     /* 当前速度档（I=100 / K=150），默认中速 */
-static int cur_a = 0, cur_b = 0;  /* 当前锁存的左右轮目标（心跳重发用） */
 
 /* 发送新目标并锁存（心跳线程按此值重发） */
 static void car_set(int a, int b)
 {
     cur_a = a; cur_b = b;
+    last_cmd_tick = osKernelGetTickCount();   /* 有目标变动即刷新，防超时误停 */
     stm32motor_control(a, b);
 }
 
@@ -89,21 +102,30 @@ void car_stop(void)      { car_set(0, 0); }
 /*==================== 心跳与蓝牙接收 ====================*/
 
 /*
- * 心跳线程：每 150ms 重发当前速度帧。
- * STM32 侧 500ms 收不到有效帧会自动停车（失效保护），遥控模式必须持续供帧。
+ * 心跳线程：每 100ms 无条件重发当前目标帧。
+ *   - STM32 侧 500ms 收不到有效帧会自动停车，遥控模式必须持续供帧；
+ *   - 若当前目标非停止，且 2s 无新命令，则自动停车（防手机松手后车一直跑）。
  */
 static void heartbeat_task(void)
 {
     for (;;) {
-        usleep(150 * 1000);
-        if (cur_a == 0 && cur_b == 0) continue;  /* 停止态停发，让 STM32 刹车灯常亮而不是被反复唤醒 */
+        osDelay(10);   /* 100ms @ 100Hz tick */
+
+        /* 命令超时自动停车 */
+        if ((cur_a != 0 || cur_b != 0) &&
+            (osKernelGetTickCount() - last_cmd_tick) > CMD_TIMEOUT_TICKS) {
+            car_stop();   /* 目标清零并锁存 */
+        }
+
+        /* 无条件重发当前目标帧（含停止态，保证 STM32 恒有帧不触发失效停车） */
         stm32motor_control(cur_a, cur_b);
     }
 }
 
 /*
  * 蓝牙接收线程：UART1 逐字节读，解析单字符命令。
- * UartRead 无数据时阻塞挂起（不空转烧 CPU）。
+ * 说明：Hi3861 的 UartRead 非阻塞（立即返回可用字节数，无数据返回 0），
+ *       故走 osDelay(2)=20ms 轮询；收到命令马上响应。
  */
 static void ble_ctrl_task(void)
 {
@@ -113,7 +135,7 @@ static void ble_ctrl_task(void)
     printf("BLE control ready: W/A/S/D/O + I/K\r\n");
     for (;;) {
         n = UartRead(WIFI_IOT_UART_IDX_1, &byte, 1);
-        if (n != 1) { usleep(20000); continue; }
+        if (n != 1) { osDelay(2); continue; }   /* 20ms 轮询，无数据不空转 */
 
         char c = (char)byte;
         switch (c) {
@@ -176,6 +198,12 @@ static void ble_control(void)
     };
     UartInit(WIFI_IOT_UART_IDX_2, &uart_attr2, NULL);
 
+    /* 创建互斥锁，串行化 UART2 发送（必须在 car_stop 发帧前创建） */
+    uart2_mutex = osMutexNew(NULL);
+    if (uart2_mutex == NULL) {
+        printf("Falied to create uart2 mutex!\n");
+    }
+
     car_stop();   /* 上电先发一帧停车，清掉 STM32 侧可能的历史目标 */
 
     attr.attr_bits = 0U;
@@ -190,6 +218,7 @@ static void ble_control(void)
         printf("Falied to create ble_ctrl!\n");
     }
 
+    /* 心跳线程负责持续供帧与超时停车，优先级稍低不抢占命令响应 */
     attr.name = "heartbeat";
     attr.priority = 24;
     if (osThreadNew((osThreadFunc_t)heartbeat_task, NULL, &attr) == NULL) {
