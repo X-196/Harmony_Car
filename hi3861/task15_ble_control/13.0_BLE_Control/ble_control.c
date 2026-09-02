@@ -10,6 +10,8 @@
  * 命令集（大小写均可，回车/换行/空格忽略）：
  *   W=前进  S=后退  A=左转  D=右转  O=停止（手机九宫格方向键布局）
  *   I=中速100档  K=高速150档（设定巡航速度档，之后 W/S 按当前档行驶）
+ *   备用字母（App 按钮键盘 A~K 没有 W/S/O 时映射用）：
+ *   B=后退  C=右转  E=停止  F=左转
  *
  * 可靠性设计（对应 STM32 侧 500ms 无帧自动停车）：
  *   1. 心跳重发：每 150ms 重发一次当前速度帧——单帧丢帧不会导致中途停车
@@ -129,6 +131,14 @@ static void ble_ctrl_task(void)
                 speed_level = 100; printf("CMD I: speed 100\r\n"); break;
             case 'k': case 'K':
                 speed_level = 150; printf("CMD K: speed 150\r\n"); break;
+            case 'b': case 'B':   /* 备用字母：后退（App 若映射 B 按钮） */
+                car_backward();printf("CMD B: backward %d\r\n", speed_level); break;
+            case 'c': case 'C':   /* 备用字母：右转 */
+                car_right();   printf("CMD C: right\r\n"); break;
+            case 'e': case 'E':   /* 备用字母：停止 */
+                car_stop();    printf("CMD E: stop\r\n"); break;
+            case 'f': case 'F':   /* 备用字母：左转 */
+                car_left();    printf("CMD F: left\r\n"); break;
             case '\r': case '\n': case ' ':
                 break;          /* 手机 App 回车确认/粘包填充，忽略 */
             default:
