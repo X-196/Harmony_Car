@@ -41,6 +41,10 @@
 /* 命令超时自动停车：2s @ 100Hz tick */
 #define CMD_TIMEOUT_TICKS 200
 
+/* 上电自检开关：1=不启动蓝牙/线程/互斥，只初始化UART2并持续发前进帧
+ * (复刻任务14单线程发帧, 用于定位 3861->STM32->电机 链路); 0=蓝牙遥控 */
+#define SELFTEST_AUTODRIVE 0
+
 static osMutexId_t uart2_mutex = NULL;      /* 串行化 UART2 发送（心跳+命令线程并发） */
 
 /* 遥控状态与动作 */
@@ -197,6 +201,15 @@ static void ble_control(void)
         .parity = 0,
     };
     UartInit(WIFI_IOT_UART_IDX_2, &uart_attr2, NULL);
+
+#if SELFTEST_AUTODRIVE
+    /* 自检：绕开蓝牙/心跳/互斥，上电持续发前进帧，复刻任务14单线程发帧 */
+    printf("SELFTEST: auto forward...\r\n");
+    for (;;) {
+        stm32motor_control(100, 100);
+        osDelay(50);
+    }
+#endif
 
     /* 创建互斥锁，串行化 UART2 发送（必须在 car_stop 发帧前创建） */
     uart2_mutex = osMutexNew(NULL);
