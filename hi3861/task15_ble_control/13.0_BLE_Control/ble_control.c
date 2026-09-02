@@ -43,11 +43,10 @@
  * 定位 3861->STM32->电机 链路); 0=蓝牙遥控 */
 #define SELFTEST_AUTODRIVE 0
 
-static osMutexId_t uart2_mutex = NULL;      /* 串行化 UART2 发送（心跳+命令线程并发） */
-
-/* 遥控状态与动作 */
-static int speed_level = 100;                /* 当前速度档（I=100 / K=150），默认中速 */
-static volatile int cur_a = 0, cur_b = 0;    /* 当前锁存的左右轮目标（心跳重发用） */
+static osMutexId_t uart2_mutex = NULL;      /* 自检模式不使用；保留接口兼容 */
+static int speed_level = 100;                /* 当前速度档（I=100 / K=150） */
+static volatile int cur_a = 0, cur_b = 0;    /* 当前锁存的左右轮目标 */
+static uint32_t next_heartbeat_tick = 0;      /* 单线程心跳调度 */
 
 /*==================== UART2 -> STM32 运动控制协议 ====================*/
 
@@ -81,9 +80,7 @@ void stm32motor_control(int motorA, int motorB)
     buf[8] = checksum;
     buf[9] = 0xFD;
 
-    if (uart2_mutex != NULL) osMutexAcquire(uart2_mutex, osWaitForever);
     UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)buf, 10);
-    if (uart2_mutex != NULL) osMutexRelease(uart2_mutex);
 
 #if SELFTEST_AUTODRIVE
     {   /* 自检版：把发出的帧字节打到串口0，确认 3861 确实在发 */
@@ -108,66 +105,60 @@ void car_left(void)      { car_set(0, speed_level + 15); }     /* 左轮停/右�
 void car_right(void)     { car_set(speed_level + 15, 0); }
 void car_stop(void)      { car_set(0, 0); }
 
-/*==================== 心跳与蓝牙接收 ====================*/
+/*==================== 蓝牙接收与心跳（单线程） ====================*/
 
 /*
- * 心跳线程：每 100ms 无条件重发当前目标帧——“按住走、松手停”。
- * STM32 侧 500ms 收不到有效帧会自动停车，遥控模式必须持续供帧。
- * 停车由手机 App 控制（松开发 O 或按停），本线程不做自动超时停车，
- * 避免长按方向键 2 秒后被自动掐断。
- */
-static void heartbeat_task(void)
-{
-    for (;;) {
-        osDelay(10);   /* 100ms @ 100Hz tick */
-        stm32motor_control(cur_a, cur_b);   /* 无条件重发当前目标帧 */
-    }
-}
-
-/*
- * 蓝牙接收线程：UART1 逐字节读，解析单字符命令。
- * 说明：Hi3861 的 UartRead 非阻塞（立即返回可用字节数，无数据返回 0），
- *       故走 osDelay(2)=20ms 轮询；收到命令马上响应。
+ * 同一个任务独占 UART2：收到命令立即发帧，每 100ms 发心跳。
+ * 这样不会出现接收线程和心跳线程同时调用 UartWrite 的竞争。
  */
 static void ble_ctrl_task(void)
 {
     uint8_t byte;
     unsigned int n;
+    uint32_t now;
 
     printf("BLE control ready: W/A/S/D/O + I/K\r\n");
+    next_heartbeat_tick = osKernelGetTickCount();
     for (;;) {
         n = UartRead(WIFI_IOT_UART_IDX_1, &byte, 1);
-        if (n != 1) { osDelay(2); continue; }   /* 20ms 轮询，无数据不空转 */
-
-        char c = (char)byte;
-        switch (c) {
-            case 'w': case 'W':
-                car_forward(); printf("CMD W: forward %d\r\n", speed_level); break;
-            case 'a': case 'A':
-                car_left();    printf("CMD A: left\r\n"); break;
-            case 's': case 'S':
-                car_backward();printf("CMD S: backward %d\r\n", speed_level); break;
-            case 'd': case 'D':
-                car_right();   printf("CMD D: right\r\n"); break;
-            case 'o': case 'O':
-                car_stop();    printf("CMD O: stop\r\n"); break;
-            case 'i': case 'I':
-                speed_level = 100; printf("CMD I: speed 100\r\n"); break;
-            case 'k': case 'K':
-                speed_level = 150; printf("CMD K: speed 150\r\n"); break;
-            case 'b': case 'B':   /* 备用字母：后退（App 若映射 B 按钮） */
-                car_backward();printf("CMD B: backward %d\r\n", speed_level); break;
-            case 'c': case 'C':   /* 备用字母：右转 */
-                car_right();   printf("CMD C: right\r\n"); break;
-            case 'e': case 'E':   /* 备用字母：停止 */
-                car_stop();    printf("CMD E: stop\r\n"); break;
-            case 'f': case 'F':   /* 备用字母：左转 */
-                car_left();    printf("CMD F: left\r\n"); break;
-            case '\r': case '\n': case ' ':
-                break;          /* 手机 App 回车确认/粘包填充，忽略 */
-            default:
-                printf("CMD? [%02x]\r\n", (unsigned char)c); break;
+        if (n == 1) {
+            char c = (char)byte;
+            switch (c) {
+                case 'w': case 'W':
+                    car_forward(); printf("CMD W: forward %d\r\n", speed_level); break;
+                case 'a': case 'A':
+                    car_left();    printf("CMD A: left\r\n"); break;
+                case 's': case 'S':
+                    car_backward();printf("CMD S: backward %d\r\n", speed_level); break;
+                case 'd': case 'D':
+                    car_right();   printf("CMD D: right\r\n"); break;
+                case 'o': case 'O':
+                    car_stop();    printf("CMD O: stop\r\n"); break;
+                case 'i': case 'I':
+                    speed_level = 100; printf("CMD I: speed 100\r\n"); break;
+                case 'k': case 'K':
+                    speed_level = 150; printf("CMD K: speed 150\r\n"); break;
+                case 'b': case 'B':
+                    car_backward();printf("CMD B: backward %d\r\n", speed_level); break;
+                case 'c': case 'C':
+                    car_right();   printf("CMD C: right\r\n"); break;
+                case 'e': case 'E':
+                    car_stop();    printf("CMD E: stop\r\n"); break;
+                case 'f': case 'F':
+                    car_left();    printf("CMD F: left\r\n"); break;
+                case '\r': case '\n': case ' ':
+                    break;
+                default:
+                    printf("CMD? [%02x]\r\n", (unsigned char)c); break;
+            }
         }
+
+        now = osKernelGetTickCount();
+        if ((int32_t)(now - next_heartbeat_tick) >= 0) {
+            stm32motor_control(cur_a, cur_b);
+            next_heartbeat_tick = now + 10;  /* 100ms @ 100Hz */
+        }
+        osDelay(2);  /* 20ms 轮询；命令线程和心跳共用此任务 */
     }
 }
 
@@ -211,13 +202,8 @@ static void ble_control(void)
     }
 #endif
 
-    /* 创建互斥锁，串行化 UART2 发送（必须在 car_stop 发帧前创建） */
-    uart2_mutex = osMutexNew(NULL);
-    if (uart2_mutex == NULL) {
-        printf("Falied to create uart2 mutex!\n");
-    }
-
-    car_stop();   /* 上电先发一帧停车，清掉 STM32 侧可能的历史目标 */
+    /* 正式模式使用单一控制线程，UART2 不再需要单独的发送互斥锁 */
+    uart2_mutex = NULL;
 
     attr.attr_bits = 0U;
     attr.cb_mem = NULL;
@@ -229,13 +215,6 @@ static void ble_control(void)
     attr.name = "ble_ctrl";
     if (osThreadNew((osThreadFunc_t)ble_ctrl_task, NULL, &attr) == NULL) {
         printf("Falied to create ble_ctrl!\n");
-    }
-
-    /* 心跳线程负责持续供帧与超时停车，优先级稍低不抢占命令响应 */
-    attr.name = "heartbeat";
-    attr.priority = 24;
-    if (osThreadNew((osThreadFunc_t)heartbeat_task, NULL, &attr) == NULL) {
-        printf("Falied to create heartbeat!\n");
     }
 }
 APP_FEATURE_INIT(ble_control); // 启动任务
