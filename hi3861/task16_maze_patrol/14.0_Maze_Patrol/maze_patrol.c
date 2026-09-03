@@ -77,7 +77,7 @@ static void stm32_send_frame(int left, int right)
 
     if (left > 150) left = 150;
     if (left < -150) left = -150;
-    if (right > 150) right = -150;
+    if (right > 150) right = 150;
     if (right < -150) right = -150;
 
     frame[0] = 0xFC;
@@ -236,35 +236,50 @@ static void car_right(void)    { stm32_send_frame(70, 0); }
 /* ---------- 受控运动段：带红外检测 + 演示计时 ---------- */
 #define STEP_MS 40             /* 受控段步进：40ms 一查红外（每查走 ~3.4mm） */
 
-static hi_u64 demo_deadline_us = 0;   /* 演示总截止时刻，0=未开始 */
+/* 传感决策事件码（前进/转向段返回值） */
+#define EV_OK        0
+#define EV_DANGER    1          /* 踩到桌沿/黑胶带（读到异常电平） */
+#define EV_OBSTACLE  -1         /* 前方超声波探测到障碍 */
+#define EV_TIMEOUT   2          /* 演示时间到 */
 
-/* 前进 duration_ms（0=一直前进）。返回：0=正常走完，1=踩到桌沿/胶带（已停车），
- * 2=演示时间到（已停车）。 */
+static hi_u64 demo_deadline_us = 0;   /* 演示总截止时刻，0=未开始 */
+static float g_front_cm = 999.0f;     /* 最近一次前方测距（供日志打印） */
+
+/* 前进 duration_ms（0=一直前进），每 STEP_MS 同步做一次完整传感决策。
+ * 返回值=EV_*；EV_DANGER/EV_OBSTACLE/EV_TIMEOUT 已停车，调用方需处理。 */
 static int forward_for(uint32_t duration_ms)
 {
     hi_u64 until = hi_get_us() + (hi_u64)duration_ms * 1000ULL;
+    float dist;
     int dummy;
 
     for (;;) {
         if (demo_deadline_us && hi_get_us() >= demo_deadline_us) {
             car_stop();
-            return 2;
+            return EV_TIMEOUT;
         }
         if (danger_detected(&dummy)) {
             car_stop();
-            return 1;
+            return EV_DANGER;
         }
+        dist = get_distance_cm();          /* 前方障碍实时检测 */
+        if (dist < OBSTACLE_CM) {
+            g_front_cm = dist;
+            car_stop();
+            return EV_OBSTACLE;
+        }
+        g_front_cm = dist;
         car_forward();
         if (duration_ms == 0) {
             usleep(STEP_MS * 1000);
             continue;
         }
-        if (hi_get_us() >= until) return 0;
+        if (hi_get_us() >= until) return EV_OK;
         usleep(STEP_MS * 1000);
     }
 }
 
-/* 原地转 duration_ms。同 forward_for 返回值。 */
+/* 原地转 duration_ms。返回值=EV_*；EV_DANGER/EV_TIMEOUT 已停车。 */
 static int spin_for(int turn_left, uint32_t duration_ms)
 {
     hi_u64 until = hi_get_us() + (hi_u64)duration_ms * 1000ULL;
@@ -273,18 +288,18 @@ static int spin_for(int turn_left, uint32_t duration_ms)
     for (;;) {
         if (demo_deadline_us && hi_get_us() >= demo_deadline_us) {
             car_stop();
-            return 2;
+            return EV_TIMEOUT;
         }
         if (danger_detected(&dummy)) {
             car_stop();
-            return 1;
+            return EV_DANGER;
         }
         if (duration_ms != 0 && hi_get_us() >= until) break;
         if (turn_left) car_left(); else car_right();
         usleep(STEP_MS * 1000);
     }
     car_stop();
-    return 0;
+    return EV_OK;
 }
 
 /* 后退 duration_ms（避障脱离用）。后退方向无红外监视，短时盲退。 */
@@ -342,10 +357,9 @@ static void escape_danger(int danger_left)
 /* ---------- 主状态机 ---------- */
 static void maze_patrol(void)
 {
-    float dist;
     int rc, side, dummy;
 
-    printf("Maze patrol v1: calibrating ground, keep car on NORMAL floor...\r\n");
+    printf("Maze patrol v2: calibrating ground, keep car on NORMAL floor...\r\n");
     servo_center();
     (void)calibrate_ground();
 
@@ -354,42 +368,37 @@ static void maze_patrol(void)
     demo_deadline_us = hi_get_us() + (hi_u64)DEMO_RUN_SECS * 1000000ULL;
 
     while (1) {
-        rc = forward_for(0);            /* 前进，直到危险/受阻/到时 */
-        if (rc == 2) break;             /* 演示时间到 */
-        if (rc == 1) {                  /* 踩线/桌沿 */
-            danger_detected(&dummy);    /* 复读确认 */
+        rc = forward_for(0);          /* 前进直到遇障/踩线/到时 */
+        if (rc == EV_TIMEOUT) break;  /* 演示时间到 */
+        if (rc == EV_DANGER) {        /* 踩到桌沿/黑胶带 */
             usleep(200000);
             if (danger_detected(&dummy)) {
                 escape_danger(dummy);
                 continue;
             }
-            continue;                   /* 假信号：继续前进 */
+            continue;                 /* 假信号：继续前进 */
         }
 
-        dist = get_distance_cm();       /* 前方箱壁 */
-        if (dist < OBSTACLE_CM) {
-            printf("OBSTACLE %dcm\r\n", (int)dist);
-            car_stop();
-            usleep(250000);
-            side = scan_choose_side();
-            if (side == 2) {
-                printf("BOTH BLOCKED -> U-TURN\r\n");
-                (void)spin_for(1, TURN_90_MS);
-                usleep(100000);
-                (void)spin_for(1, TURN_90_MS);
-            } else if (side == 0) {
-                printf("TURN LEFT 90\r\n");
-                (void)spin_for(1, TURN_90_MS);
-            } else {
-                printf("TURN RIGHT 90\r\n");
-                (void)spin_for(0, TURN_90_MS);
-            }
-            car_stop();
+        /* rc == EV_OBSTACLE：前方箱子 */
+        printf("OBSTACLE %.0fcm -> SCAN\r\n", (double)g_front_cm);
+        car_stop();
+        usleep(250000);
+        side = scan_choose_side();
+        if (side == 2) {
+            printf("BOTH BLOCKED -> U-TURN\r\n");
+            (void)spin_for(1, TURN_90_MS);
             usleep(100000);
-            (void)forward_for(ESCAPE_MS);   /* 受控直行脱离，途中踩线会再触发 */
-            continue;
+            (void)spin_for(1, TURN_90_MS);
+        } else if (side == 0) {
+            printf("TURN LEFT 90\r\n");
+            (void)spin_for(1, TURN_90_MS);
+        } else {
+            printf("TURN RIGHT 90\r\n");
+            (void)spin_for(0, TURN_90_MS);
         }
-        usleep(STEP_MS * 1000);
+        car_stop();
+        usleep(100000);
+        (void)forward_for(ESCAPE_MS);   /* 受控直行脱离，途中遇障/踩线会再处理 */
     }
 
     car_stop();
