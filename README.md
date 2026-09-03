@@ -56,8 +56,12 @@ Harmony_Car/
 │   │   ├── 12.0_UART_Correspondence/   # 工程主源码
 │   │   ├── output/          # 编译产物 allinone.bin
 │   │   └── reference/       # app/BUILD.gn 参考
-│   └── task15_ble_control/  # 扩展：蓝牙遥控小车（UART1 蓝牙收 W/A/S/D/O/I/K + UART2 发 V2 帧）
-│       ├── 13.0_BLE_Control/    # 工程主源码
+│   ├── task15_ble_control/  # 扩展：蓝牙遥控小车（UART1 蓝牙收 W/A/S/D/O/I/K + GPIO11 软UART 发 V2 帧）
+│   │   ├── 13.0_BLE_Control/    # 工程主源码
+│   │   ├── output/          # 编译产物 allinone.bin
+│   │   └── reference/       # app/BUILD.gn 参考
+│   └── task16_maze_patrol/  # 扩展：迷宫巡逻（避障+防跌落/黑胶带禁区，2 分钟自主演示）
+│       ├── 14.0_Maze_Patrol/    # 工程主源码
 │       ├── output/          # 编译产物 allinone.bin
 │       └── reference/       # app/BUILD.gn 参考
 └── stm32/                   # STM32 侧 Keil MDK5 工程
@@ -153,9 +157,14 @@ Harmony_Car/
 - **任务24 · task14_uart_correspondence**：系统通信协议（双核综合，Hi3861 ⇄ STM32）
   - V2 10 字节帧 `FC|02|0A|左int16|右int16|seq|XOR|FD`（UART2 115200），STM32 侧 PID 闭环 + 车灯渲染，详见 `hi3861/task14_uart_correspondence/README.md` 与 `stm32/8_双核协议控制/README.md`
 - **扩展 · task15_ble_control**：**手机蓝牙遥控小车**（自创综合，U+ 无对应任务）
-  - 任务9 蓝牙（UART1/9600/JDY-16）+ 任务24 双核协议拼合：手机发 `W/A/S/D/O/I/K` 单字符 → Hi3861 case 分发 → UART2 发 V2 帧控 STM32
+  - 任务9 蓝牙（UART1/9600/JDY-16）+ 任务24 双核协议拼合：手机发 `W/A/S/D/O/I/K` 单字符 → Hi3861 case 分发 → GPIO11 软UART 发 V2 帧控 STM32
   - `heartbeat_task` 每 150ms 重发速度帧，匹配 STM32 500ms 无帧自动停车保护；STM32 无需重烧
   - ✅ 编译成功（780104 字节，md5 `36a4fe87b788548eca077020208662b2`），烧录联调见 `hi3861/task15_ble_control/README.md`
+- **扩展 · task16_maze_patrol**：**迷宫巡逻演示**（避障 + 防跌落二合一，自创综合）
+  - 纸箱迷宫里自主巡逻 2 分钟不撞箱：超声波 <20cm → 舵机扫两侧选路 → 单轮支点转 90°，双侧堵则掉头
+  - **防跌落与黑胶带禁区同构检测**：TCRT5000 朝下，开机 2s 多数表决标定地面电平，`读数≠地面电平`（桌沿无反射 / 黑胶带吸红外）→ 停 → 倒车 → 朝另一侧转 90°
+  - 传输层复用 task15 软UART 9600（实车 STM32 免重烧）；全部时长 `hi_get_us()` 实时计时，运动中每 40ms 查红外，绝不盲跑
+  - ✅ 编译成功（784840 字节，md5 `455bdf34185877a0c4cb6b746c5587a5`），实机验证清单见 `hi3861/task16_maze_patrol/README.md`
 
 ## 环境与工具链
 
@@ -209,6 +218,9 @@ Harmony_Car/
 - [2026-08-26](diary/2026-08-26.md)：任务3/4/5（OpenHarmony 环境 + Hello World 烧录）、任务7（GPIO 舵机 + 互斥锁）与任务21（PWM 电机）完成
 - [2026-08-29](diary/2026-08-29.md)：任务20（STM32 NFC 读卡：PN532 唤醒 + 循环寻卡 + 卡号判定）完成
 - [2026-08-31](diary/2026-08-31.md)：任务13（AP3216C 光照强度采集，I2C 三合一传感器）完成
+- [2026-09-01](diary/2026-09-01.md)：任务24（双核协议）完成，实机双核联调跑通
+- [2026-09-02](diary/2026-09-02.md)：任务15 蓝牙遥控联调（9600 间歇分时版）完成
+- [2026-09-03](diary/2026-09-03.md)：task16 迷宫巡逻（避障+防跌落二合一）编译完成，实机联调待做
 
 ## 后续计划
 
