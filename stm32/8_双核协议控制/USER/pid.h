@@ -19,6 +19,10 @@ int Incremental_PI_B(int Encoders_B, int Target_B);   // 右轮 PID
 // 把目标转速(圈/s)换算成编码器目标脉冲数（每 OverflowTime ms 的量）
 int Rs_To_CPR(float rads);
 
+// 编码器累计里程（脉冲, 带符号; 供主核算 s2=odl+odr、theta=odr-odl）
+extern volatile int32_t odo_left;
+extern volatile int32_t odo_right;
+
 // 系统闭环控制函数（消费协议帧 → 读编码器 → 算目标 → PID → Set_Pwm）
 void System_Control(void);
 
