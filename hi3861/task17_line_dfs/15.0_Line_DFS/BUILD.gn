@@ -1,4 +1,4 @@
-lite_component("line_dfs") {
+static_library("line_dfs") {
     sources = [
         "line_dfs.c"
     ]

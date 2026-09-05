@@ -51,8 +51,6 @@
 #define STM32_TX_GPIO   11
 #define SOFTUART_BIT_US 104     /* 9600 baud: 104.2us/bit，RTOS 抖动可忽略 */
 
-static volatile uint8_t tx_seq = 0;
-
 static void softuart_tx_byte(uint8_t value)
 {
     unsigned int i;
@@ -68,10 +66,10 @@ static void softuart_tx_byte(uint8_t value)
     hi_udelay(SOFTUART_BIT_US);
 }
 
-/* V2 10字节帧：FC|02|0A|左int16|右int16|seq|XOR|FD（一帧约10.4ms） */
+/* AA SET_SPEED 帧：AA|01|04|左int16|右int16|CHECK（一帧约 8.3ms @9600） */
 static void stm32_send_frame(int left, int right)
 {
-    uint8_t frame[10];
+    uint8_t frame[8];
     uint8_t checksum;
     unsigned int i;
 
@@ -80,20 +78,17 @@ static void stm32_send_frame(int left, int right)
     if (right > 150) right = 150;
     if (right < -150) right = -150;
 
-    frame[0] = 0xFC;
-    frame[1] = 0x02;
-    frame[2] = 0x0A;
+    frame[0] = 0xAA;                                  /* SOF */
+    frame[1] = 0x01;                                  /* CMD SET_SPEED */
+    frame[2] = 0x04;                                  /* LEN */
     frame[3] = (uint8_t)(left & 0xFF);
     frame[4] = (uint8_t)((left >> 8) & 0xFF);
     frame[5] = (uint8_t)(right & 0xFF);
     frame[6] = (uint8_t)((right >> 8) & 0xFF);
-    frame[7] = tx_seq++;
-    checksum = frame[1] ^ frame[2] ^ frame[3] ^ frame[4] ^
-               frame[5] ^ frame[6] ^ frame[7];
-    frame[8] = checksum;
-    frame[9] = 0xFD;
+    checksum = (uint8_t)(0x01 + 0x04 + frame[3] + frame[4] + frame[5] + frame[6]);
+    frame[7] = checksum;
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 8; i++) {
         softuart_tx_byte(frame[i]);
     }
 }
@@ -225,7 +220,7 @@ static int danger_detected(int *out_left)
     return 1;
 }
 
-/* ---------- 运动原语（V2 帧目标，单位 0.01圈/s） ---------- */
+/* ---------- 运动原语（AA SET_SPEED 帧目标，单位 0.01圈/s） ---------- */
 static void car_forward(void)  { stm32_send_frame(CRUISE, CRUISE); }
 static void car_backward(void) { stm32_send_frame(-CRUISE, -CRUISE); }
 static void car_stop(void)     { stm32_send_frame(0, 0); }

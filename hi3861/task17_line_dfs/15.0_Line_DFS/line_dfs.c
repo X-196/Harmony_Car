@@ -1,36 +1,3 @@
-/*
- * Trace following v6.3 "DFS junction backtracking" line follower.
- *
- * Sensor semantics (as observed on the car):
- *   sensor on the black tape  => "white" reading (line_* = 1)
- *   sensor on normal ground   => "black" reading (line_* = 0)
- *   IR GPIO13 = left probe, GPIO14 = right probe; 2-sample debounce both ways.
- *
- * Behavior:
- *   1. Normal line following: single probe on tape => gentle correction
- *      (tape under left probe => steer left, tape under right => steer right);
- *      both probes on ground => straight.
- *   2. At a double-white junction, try LEFT first, then RIGHT if the
- *      left branch is later found to be a dead end.
- *   3. A dead end is heuristically detected as both probes seeing ground
- *      continuously for TRACE_DEAD_END_TICKS after the line was acquired.
- *      The car reverses until it reaches the previous double-white junction,
- *      then tries the unvisited branch. This is a bounded DFS stack.
- *
- * Limitation: with only two probes, a long straight section and a dead end
- *      can both look like double-black. TRACE_DEAD_END_TICKS therefore needs
- *      calibration on the actual track. There is no reliable finish marker
- *      in the current hardware interface; endpoint detection is not inferred.
- *   Each turn has a timeout so the car can never spin forever.
- *
- * Motor link unchanged: GPIO11 UART2_TXD -> STM32, 115200 8N1,
- * AA | CMD | LEN | PAYLOAD | CHECK, SET_SPEED / STOP. The 100 ms SET_SPEED
- * resend doubles as the motion-lease heartbeat (STM32 stops on its own when
- * the 300 ms lease expires).
- *
- * Safety: motion is disabled by default (TRACE_ENABLE_MOTION 0). Stale or
- * failed sensor data forces a local STOP.
- */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -44,60 +11,122 @@
 #include "wifiiot_uart_ex.h"
 #include "hi_time.h"
 
-/* Keep this 0 until the static and wheels-off-ground checks are complete. */
-#define TRACE_ENABLE_MOTION               0
+#define TRACE_ENABLE_MOTION               1
 
-/* BLE debug mirror: JDY-16 (Gamer_0o0) on UART1, phone app watches the log. */
+#define TRACE_DEMO_SCRIPT                 0
+#define DEMO_ARC_INNER                    0
+#define DEMO_ARC_OUTER                    80
+#define DEMO_ARC_MIN_TICKS                30U
+#define DEMO_ARC_TIMEOUT_TICKS            200U
+#define DEMO_REARM_S2                     (10L * S2_PER_CM)
+#define DEMO_PAUSE_TICKS                  300U
+#define DEMO_BAR_EXPIRE_TICKS             6000U
+
+#define DEMO_REV_SPEED                    80
+#define DEMO_REV_DELTA                    40
+#define DEMO_REV_MAX_S2                   (60L * S2_PER_CM)
+#define DEMO_RETURN_TICKS                 300U
+#define DEMO_PH_DRIVE                     0
+#define DEMO_PH_REVERSE                   1
+#define DEMO_PH_RETURN                    2
+
+#define CAPTURE_INNER_SPEED               40
+#define CAPTURE_OUTER_SPEED               160
+#define CAPTURE_MIN_TICKS                 20U
+#define CAPTURE_TIMEOUT_TICKS             150U
+
 #define TRACE_BLE_DEBUG                   1
 #define BLE_DEBUG_BAUD                    9600U
-#define BLE_HEARTBEAT_TICKS               100U /* 1 s status heartbeat over BLE */
+#define BLE_HEARTBEAT_TICKS               100U
 
 #define PROTOCOL_SOF                      0xAAU
 #define MAX_PAYLOAD                       16U
 #define PROTOCOL_FRAME_MAX                (MAX_PAYLOAD + 4U)
 #define PROTOCOL_CMD_SET_SPEED            0x01U
 #define PROTOCOL_CMD_STOP                 0x02U
+#define PROTOCOL_CMD_PING                 0x03U
+#define PROTOCOL_CMD_GET_STATUS           0x04U
 #define PROTOCOL_CMD_ACK                  0x81U
+#define PROTOCOL_CMD_STATUS               0x82U
+#define STATUS_PAYLOAD_LEN                13U
 
 #define PROTOCOL_STATUS_OK                0U
 #define PROTOCOL_STATUS_BAD_LENGTH        1U
 #define PROTOCOL_STATUS_BAD_CHECKSUM      2U
 #define PROTOCOL_STATUS_INVALID_PARAM     3U
 #define PROTOCOL_STATUS_UNKNOWN_CMD       4U
-#define PROTOCOL_STATUS_UNKNOWN_STATUS    255U
 
 #define TRACE_THREAD_STACK_SIZE           4096U
 #define TRACE_THREAD_PRIORITY             25
 #define ACK_READ_BUFFER_SIZE              64U
 #define ACK_POLL_DELAY_TICKS              1U
 
-/* Hi3861 uses a 10 ms RTOS tick in this project. */
-#define SENSOR_SAMPLE_TICKS               1U   /* 10 ms */
-#define TRACE_DEBOUNCE_SAMPLES            2U   /* 2-sample confirm both ways = 20 ms */
-#define CONTROL_LOOP_TICKS                1U   /* 10 ms reaction */
-#define COMMAND_RESEND_TICKS              10U  /* 100 ms, below STM32's 300 ms lease */
-#define SENSOR_STALE_TICKS                12U  /* 120 ms without a fresh sample => STOP */
-#define STARTUP_GUARD_TICKS               100U /* 1 s initial STOP guard */
-#define STATUS_LOG_TICKS                  10U  /* 100 ms cadence for status prints */
+#define SENSOR_SAMPLE_TICKS               1U
+#define TRACE_DEBOUNCE_SAMPLES            2U
+#define CONTROL_LOOP_TICKS                1U
+#define COMMAND_RESEND_TICKS              3U
+#define SENSOR_STALE_TICKS                12U
+#define STARTUP_GUARD_TICKS               100U
+#define STATUS_LOG_TICKS                  10U
+#define STATUS_POLL_TICKS                 3U
 
-#define DRIVE_SPEED                       80   /* straight-line speed */
-#define CORRECT_INNER_SPEED               50   /* slower / inside wheel of a correction */
-#define CORRECT_OUTER_SPEED               70   /* faster / outside wheel of a correction */
-/* In-place pivot used only for the two crossing turns. Tune on the car: too
-   fast overshoots the sensor exit; too slow crawls through the junction. */
-#define TURN_SPEED                        40
-#define TURN_TIMEOUT_TICKS                300U /* 3 s hard stop on a turn */
-#define BACKTRACK_SPEED                   45
-#define BACKTRACK_TIMEOUT_TICKS           800U /* 8 s maximum reverse */
-#define TRACE_DEAD_END_TICKS              80U  /* 800 ms double-black heuristic */
-#define TRACE_STACK_MAX                   16U
-#define TRACE_BACKTRACK_JUNCTION_GUARD    8U  /* do not retrigger same junction */
+#define DRIVE_SPEED                       80
+#define CORRECT_INNER_SPEED               0
+#define CORRECT_OUTER_SPEED               80
+#define CORRECT_PULSE_TICKS               50U
+#define SETTLE_SPEED                      40
+#define SETTLE_TICKS                      50U
+
+#define S2_PER_CM                         392L
+
+#define HEADING_PULSES_PER_DEG            24L
+#define DEG_TO_PULSES(d)                  ((int32_t)(d) * HEADING_PULSES_PER_DEG)
+
+#define WATCH_CONFIRM_TICKS               2U
+#define WATCH_BAR2_TICKS                  4U
+
+#define WATCH_BAR1_MIN_TICKS              8U
+#define WATCH_TIMEOUT_TICKS               500U
+#define GOAL_GAP_MIN_S2                   (S2_PER_CM / 2L)
+#define GOAL_GAP_MAX_S2                   (4L * S2_PER_CM)
+
+#define DEAD_SILENCE_S2                   (3L * S2_PER_CM)
+
+#define BAR2_GUARD_S2                     (8L * S2_PER_CM)
+#define BAR2_WINDOW_S2                    (35L * S2_PER_CM)
+
+#define W2_WINDOW_TICKS                   40U
+#define W2_HEADING_GUARD                  DEG_TO_PULSES(30)
+
+#define WIGGLE_PIVOT_SPEED                40
+#define WIGGLE_ARC_DEG                    25
+#define WIGGLE_ARCS                       4U
+#define WIGGLE_ARC_TIMEOUT_TICKS          250U
+
+#define REJOIN_PIVOT_SPEED                40
+#define REJOIN_CONFIRM_DEG                90
+#define REJOIN_SWITCH_DEG                 150
+#define REJOIN_CENTER_DEG                 120
+
+#define BRANCH_SIDE_RIGHT                 (-1)
+#define BRANCH_SIDE_LEFT                  1
+
+#define REJOIN_PHASE_CONFIRM              0U
+#define REJOIN_PHASE_SWITCH               1U
+#define REJOIN_PHASE_CENTER               2U
+
+#define REV_SPEED                         40
+#define REV_BUDGET_S2                     (150L * S2_PER_CM)
+#define REV_GUARD_S2                      (10L * S2_PER_CM)
+#define REV_DOSE_DEG                      8
+#define REV_DOSE_SPEED                    40
+#define REV_DOSE_TIMEOUT_TICKS            100U
+
+#define BAR_SUPPRESS_S2                   (10L * S2_PER_CM)
 
 #define IR_LEFT_PIN                       WIFI_IOT_IO_NAME_GPIO_13
 #define IR_RIGHT_PIN                      WIFI_IOT_IO_NAME_GPIO_14
 
-/* The SDK provides this symbol even when older headers omit the declaration. */
-extern unsigned int UartIsBufEmpty(WifiIotUartIdx id, unsigned char *empty);
 
 #if TRACE_BLE_DEBUG
 static void ble_debug_printf(const char *format, ...)
@@ -148,7 +177,7 @@ typedef struct {
 typedef struct {
     uint8_t raw_left;
     uint8_t raw_right;
-    uint8_t line_left;   /* debounced: 1 = left probe on the tape (white reading) */
+    uint8_t line_left;
     uint8_t line_right;
     uint8_t ready;
     uint8_t healthy;
@@ -157,38 +186,112 @@ typedef struct {
 } SensorSnapshot;
 
 typedef struct {
+    int32_t odo_left;
+    int32_t odo_right;
+    int16_t speed_left;
+    int16_t speed_right;
+    uint8_t flags;
+    uint32_t updated_tick;
+    uint32_t sequence;
+} StatusSnapshot;
+
+typedef enum {
+    TRACE_STRAIGHT = 0,
+    TRACE_LEFT,
+    TRACE_RIGHT,
+    TRACE_SETTLE,
+    TRACE_WIGGLE,
+    TRACE_REVERSE,
+    TRACE_REJOIN,
+    TRACE_CAPTURE,
+    TRACE_GOAL
+} TraceState;
+
+typedef struct {
+    TraceState state;
+    uint32_t state_enter_tick;
+
+    int32_t s2;
+    int32_t theta;
+    int32_t prev_odo_left;
+    int32_t prev_odo_right;
+    uint8_t odo_valid;
+    uint32_t odo_seq;
+
+    uint8_t watch_active;
+    uint8_t watch_ww;
+    uint8_t watch_seen_black;
+    int32_t watch_trail_s2;
+    int32_t watch_last_white_s2;
+    uint8_t watch_bar2;
+    uint8_t watch_bar1;
+    uint32_t watch_start_tick;
+
+    uint8_t w2_left_valid;
+    uint8_t w2_right_valid;
+    uint32_t w2_left_tick;
+    uint32_t w2_right_tick;
+    int32_t w2_left_theta;
+    int32_t w2_right_theta;
+    int32_t bar_suppress_s2;
+
+    uint8_t bar_valid;
+    int32_t bar_valid_s2;
+    uint8_t side_recorded;
+
+    int branch_side;
+
+    uint32_t wiggle_arc;
+    int32_t wiggle_arc_theta;
+    uint32_t wiggle_arc_tick;
+
+    int32_t rev_prev_s2;
+    int32_t rev_budget_s2;
+    uint8_t rev_started;
+    int32_t rev_guard_s2;
+    int16_t rev_cmd_left;
+    int16_t rev_cmd_right;
+
+    uint8_t rev_dosing;
+    int rev_dose_dir;
+    int32_t rev_dose_theta;
+    uint32_t rev_dose_tick;
+    uint8_t rev_dose_lock;
+    uint8_t rev_luck;
+
+    uint32_t rejoin_phase;
+    uint32_t rejoin_edges;
+    uint8_t rejoin_last;
+    int32_t rejoin_theta;
+
+    uint8_t demo_ww;
+    uint8_t demo_bars;
+    int demo_script;
+    uint32_t demo_script_tick;
+    int32_t demo_rearm_s2;
+    uint32_t demo_pause_start;
+    uint8_t demo_phase;
+    int16_t demo_cmd_left;
+    int16_t demo_cmd_right;
+    int32_t demo_rev_s2;
+    int32_t demo_entry_s2;
+    int demo_entry_dir;
+    int demo_return_dir;
+    uint32_t demo_bar1_tick;
+    uint32_t demo_phase_tick;
+} TraceController;
+
+typedef struct {
     int16_t left;
     int16_t right;
     uint8_t stop;
 } MotionCommand;
 
-typedef enum {
-    TRACE_FOLLOW = 0,   /* normal line following */
-    TRACE_TURN_LEFT,    /* pivot left until the right probe is black */
-    TRACE_TURN_RIGHT,   /* pivot right until the left probe is black */
-    TRACE_BACKTRACK,    /* reverse to the most recent junction */
-    TRACE_FAILED        /* every branch from the start has been exhausted */
-} TraceState;
-
-typedef struct {
-    uint8_t tried_left;
-    uint8_t tried_right;
-} TraceJunction;
-
-typedef struct {
-    TraceState state;
-    uint32_t state_enter_tick;
-    uint32_t double_black_ticks;
-    uint32_t backtrack_junction_guard;
-    uint8_t junction_latched;
-    uint8_t line_seen;
-    TraceJunction stack[TRACE_STACK_MAX];
-    uint8_t stack_depth;
-} TraceController;
-
 static osMutexId_t sensor_mutex;
 static SensorSnapshot sensor_snapshot;
 static volatile uint8_t sensor_reset_requested;
+static osMutexId_t status_mutex;
+static StatusSnapshot status_snapshot;
 static uint32_t link_ack_ok;
 static uint32_t link_ack_bad;
 
@@ -233,22 +336,32 @@ static int protocol_send_frame(uint8_t cmd, uint8_t len, const uint8_t *payload)
     int written;
 
     if (frame_len == 0U) {
-        printf("[Trace v6.3] frame encode failed: cmd=0x%02X len=%u\r\n", cmd, len);
+        printf("[Trace] frame encode failed: cmd=0x%02X len=%u\r\n", cmd, len);
         return -1;
     }
 
     written = UartWrite(WIFI_IOT_UART_IDX_2, frame, frame_len);
     if (written != frame_len) {
-        printf("[Trace v6.3] UART2 write failed: cmd=0x%02X wrote=%d/%u\r\n",
+        printf("[Trace] UART2 write failed: cmd=0x%02X wrote=%d/%u\r\n",
             cmd, written, frame_len);
         return -1;
     }
     return 0;
 }
 
+static int protocol_send_ping(void)
+{
+    return protocol_send_frame(PROTOCOL_CMD_PING, 0U, NULL);
+}
+
 static int protocol_send_stop(void)
 {
     return protocol_send_frame(PROTOCOL_CMD_STOP, 0U, NULL);
+}
+
+static int protocol_send_get_status(void)
+{
+    return protocol_send_frame(PROTOCOL_CMD_GET_STATUS, 0U, NULL);
 }
 
 static int protocol_send_speed(int16_t left, int16_t right)
@@ -271,8 +384,14 @@ static const char *protocol_command_name(uint8_t cmd)
             return "SET_SPEED";
         case PROTOCOL_CMD_STOP:
             return "STOP";
+        case PROTOCOL_CMD_PING:
+            return "PING";
+        case PROTOCOL_CMD_GET_STATUS:
+            return "GET_STATUS";
         case PROTOCOL_CMD_ACK:
             return "ACK";
+        case PROTOCOL_CMD_STATUS:
+            return "STATUS";
         default:
             return "UNKNOWN_CMD";
     }
@@ -296,21 +415,47 @@ static const char *protocol_status_name(uint8_t status)
     }
 }
 
-static void protocol_handle_received_frame(const ProtocolRxParser *parser)
+static int32_t decode_i32_le(const uint8_t *data)
 {
-    if (parser->cmd != PROTOCOL_CMD_ACK || parser->len != 2U) {
-        printf("[Trace v6.3] RX ignored: cmd=0x%02X len=%u\r\n", parser->cmd, parser->len);
+    return (int32_t)((uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+        ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24));
+}
+
+static int16_t decode_i16_le(const uint8_t *data)
+{
+    return (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+static int32_t status_odo_delta(int32_t now, int32_t base)
+{
+    return (int32_t)((uint32_t)now - (uint32_t)base);
+}
+
+static void status_publish(const uint8_t *payload)
+{
+    if (osMutexAcquire(status_mutex, osWaitForever) != osOK) {
         return;
     }
+    status_snapshot.odo_left = decode_i32_le(&payload[0]);
+    status_snapshot.odo_right = decode_i32_le(&payload[4]);
+    status_snapshot.speed_left = decode_i16_le(&payload[8]);
+    status_snapshot.speed_right = decode_i16_le(&payload[10]);
+    status_snapshot.flags = payload[12];
+    status_snapshot.updated_tick = hi_get_tick();
+    status_snapshot.sequence++;
+    osMutexRelease(status_mutex);
+}
 
-    if (parser->payload[1] != PROTOCOL_STATUS_OK) {
-        link_ack_bad++;
-        printf("[Trace v6.3] ACK %s (0x%02X): %s (%u)\r\n",
-            protocol_command_name(parser->payload[0]), parser->payload[0],
-            protocol_status_name(parser->payload[1]), parser->payload[1]);
-    } else {
-        link_ack_ok++;
+static StatusSnapshot status_take_snapshot(void)
+{
+    StatusSnapshot snapshot = {0};
+
+    if (osMutexAcquire(status_mutex, osWaitForever) != osOK) {
+        return snapshot;
     }
+    snapshot = status_snapshot;
+    osMutexRelease(status_mutex);
+    return snapshot;
 }
 
 static void protocol_rx_reset(ProtocolRxParser *parser)
@@ -328,6 +473,40 @@ static void protocol_rx_start(ProtocolRxParser *parser)
     parser->len = 0U;
     parser->index = 0U;
     parser->checksum = 0U;
+}
+
+static void protocol_handle_received_frame(const ProtocolRxParser *parser)
+{
+    uint8_t original_cmd;
+    uint8_t status;
+
+    if (parser->cmd == PROTOCOL_CMD_STATUS) {
+        if (parser->len != STATUS_PAYLOAD_LEN) {
+            printf("[Trace v7.3] STATUS invalid length: %u\r\n", parser->len);
+            return;
+        }
+        status_publish(parser->payload);
+        return;
+    }
+    if (parser->cmd != PROTOCOL_CMD_ACK) {
+        printf("[Trace v7.3] RX ignored: cmd=0x%02X len=%u\r\n", parser->cmd, parser->len);
+        return;
+    }
+    if (parser->len != 2U) {
+        printf("[Trace v7.3] ACK invalid length: %u\r\n", parser->len);
+        return;
+    }
+
+    original_cmd = parser->payload[0];
+    status = parser->payload[1];
+    if (status != PROTOCOL_STATUS_OK) {
+        link_ack_bad++;
+        printf("[Trace v7.3] ACK %s (0x%02X): %s (%u)\r\n",
+            protocol_command_name(original_cmd), original_cmd,
+            protocol_status_name(status), status);
+    } else {
+        link_ack_ok++;
+    }
 }
 
 static void protocol_parse_byte(ProtocolRxParser *parser, uint8_t byte)
@@ -349,7 +528,7 @@ static void protocol_parse_byte(ProtocolRxParser *parser, uint8_t byte)
             parser->len = byte;
             parser->checksum = (uint8_t)(parser->checksum + byte);
             if (parser->len > MAX_PAYLOAD) {
-                printf("[Trace v6.3] RX bad length: %u\r\n", parser->len);
+                printf("[Trace v7.3] RX bad length: %u\r\n", parser->len);
                 protocol_rx_reset(parser);
                 if (byte == PROTOCOL_SOF) {
                     protocol_rx_start(parser);
@@ -374,7 +553,7 @@ static void protocol_parse_byte(ProtocolRxParser *parser, uint8_t byte)
             if (byte == parser->checksum) {
                 protocol_handle_received_frame(parser);
             } else {
-                printf("[Trace v6.3] RX checksum error: cmd=0x%02X\r\n", parser->cmd);
+                printf("[Trace v7.3] RX checksum error: cmd=0x%02X\r\n", parser->cmd);
             }
             protocol_rx_reset(parser);
             if (byte == PROTOCOL_SOF) {
@@ -390,29 +569,15 @@ static void protocol_parse_byte(ProtocolRxParser *parser, uint8_t byte)
 
 static void trace_ack_thread(void *arg)
 {
-    uint8_t buffer[ACK_READ_BUFFER_SIZE];
     ProtocolRxParser parser;
 
     (void)arg;
     protocol_rx_reset(&parser);
 
     while (1) {
-        unsigned char empty = 1U;
-        unsigned int result = UartIsBufEmpty(WIFI_IOT_UART_IDX_2, &empty);
-
-        if (result == WIFI_IOT_SUCCESS && empty == 0U) {
-            int count = UartRead(WIFI_IOT_UART_IDX_2, buffer, sizeof(buffer));
-            int i;
-
-            if (count < 0) {
-                printf("[Trace v6.3] UART2 read failed\r\n");
-            } else {
-                for (i = 0; i < count; i++) {
-                    protocol_parse_byte(&parser, buffer[i]);
-                }
-            }
-        } else if (result != WIFI_IOT_SUCCESS) {
-            printf("[Trace v6.3] UART2 buffer check failed: %u\r\n", result);
+        uint8_t byte;
+        if (UartRead(WIFI_IOT_UART_IDX_2, &byte, 1) == 1) {
+            protocol_parse_byte(&parser, byte);
         }
         osDelay(ACK_POLL_DELAY_TICKS);
     }
@@ -532,13 +697,13 @@ static void trace_sensor_thread(void *arg)
             sensor_publish((uint8_t)raw_left, (uint8_t)raw_right,
                 &left, &right, 0U, now);
             if (was_healthy != 0U) {
-                printf("[Trace v6.3] infrared read failed: left=%u right=%u\r\n",
+                printf("[Trace v7.3] infrared read failed: left=%u right=%u\r\n",
                     left_result, right_result);
             }
             was_healthy = 0U;
             last_logged_ready = 0U;
         } else {
-            /* Weak reflection (raw high) = tape / air, both read "white". */
+
             uint8_t line_left = (raw_left == WIFI_IOT_GPIO_VALUE1) ? 1U : 0U;
             uint8_t line_right = (raw_right == WIFI_IOT_GPIO_VALUE1) ? 1U : 0U;
 
@@ -548,18 +713,18 @@ static void trace_sensor_thread(void *arg)
                 &left, &right, 1U, now);
 
             if (was_healthy == 0U) {
-                printf("[Trace v6.3] infrared read recovered; debouncing again\r\n");
+                printf("[Trace v7.3] infrared read recovered; debouncing again\r\n");
             }
             was_healthy = 1U;
 
             if (left.ready != 0U && right.ready != 0U &&
                 (last_logged_ready == 0U || left.stable != last_line_left ||
                  right.stable != last_line_right)) {
-                printf("[Trace v6.3] sensor raw L=%u R=%u, line L=%s R=%s\r\n",
+                printf("[Trace v7.3] sensor raw L=%u R=%u, line L=%s R=%s\r\n",
                     (uint8_t)raw_left, (uint8_t)raw_right,
                     left.stable != 0U ? "white" : "black",
                     right.stable != 0U ? "white" : "black");
-                ble_debug_printf("[Trace v6.3] sensor L=%s R=%s\r\n",
+                ble_debug_printf("[Trace v7.3] sensor L=%s R=%s\r\n",
                     left.stable != 0U ? "white" : "black",
                     right.stable != 0U ? "white" : "black");
                 last_line_left = left.stable;
@@ -574,19 +739,50 @@ static void trace_sensor_thread(void *arg)
 static const char *trace_state_name(TraceState state)
 {
     switch (state) {
-        case TRACE_FOLLOW:
-            return "FOLLOW";
-        case TRACE_TURN_LEFT:
-            return "TURN_L";
-        case TRACE_TURN_RIGHT:
-            return "TURN_R";
-        case TRACE_BACKTRACK:
-            return "BACKTRACK";
-        case TRACE_FAILED:
-            return "FAILED";
+        case TRACE_STRAIGHT:
+            return "STRAIGHT";
+        case TRACE_LEFT:
+            return "LEFT";
+        case TRACE_RIGHT:
+            return "RIGHT";
+        case TRACE_SETTLE:
+            return "SETTLE";
+        case TRACE_WIGGLE:
+            return "WIGGLE";
+        case TRACE_REVERSE:
+            return "REVERSE";
+        case TRACE_REJOIN:
+            return "REJOIN";
+        case TRACE_CAPTURE:
+            return "CAPTURE";
+        case TRACE_GOAL:
+            return "GOAL";
         default:
             return "UNKNOWN";
     }
+}
+
+static void reckoning_update(TraceController *controller, const StatusSnapshot *status)
+{
+    int32_t dl;
+    int32_t dr;
+
+    if (status->sequence == 0U || status->sequence == controller->odo_seq) {
+        return;
+    }
+    controller->odo_seq = status->sequence;
+    if (controller->odo_valid == 0U) {
+        controller->prev_odo_left = status->odo_left;
+        controller->prev_odo_right = status->odo_right;
+        controller->odo_valid = 1U;
+        return;
+    }
+    dl = status_odo_delta(status->odo_left, controller->prev_odo_left);
+    dr = status_odo_delta(status->odo_right, controller->prev_odo_right);
+    controller->prev_odo_left = status->odo_left;
+    controller->prev_odo_right = status->odo_right;
+    controller->s2 += dl + dr;
+    controller->theta += dr - dl;
 }
 
 static void trace_enter_state(TraceController *controller, TraceState state,
@@ -596,169 +792,835 @@ static void trace_enter_state(TraceController *controller, TraceState state,
 
     controller->state = state;
     controller->state_enter_tick = now;
-    printf("[Trace v6.3] %s -> %s (L=%s R=%s depth=%u)\r\n",
+    printf("[Trace v7.3] %s -> %s (L=%s R=%s s=%ld h=%ld)\r\n",
         trace_state_name(previous), trace_state_name(state),
         sensor->line_left != 0U ? "white" : "black",
         sensor->line_right != 0U ? "white" : "black",
-        controller->stack_depth);
-    ble_debug_printf("[Trace v6.3] %s -> %s (L=%s R=%s depth=%u)\r\n",
+        (long)(controller->s2 / S2_PER_CM),
+        (long)(controller->theta / HEADING_PULSES_PER_DEG));
+    ble_debug_printf("[Trace v7.3] %s -> %s (L=%s R=%s s=%ld)\r\n",
         trace_state_name(previous), trace_state_name(state),
         sensor->line_left != 0U ? "w" : "b",
         sensor->line_right != 0U ? "w" : "b",
-        controller->stack_depth);
+        (long)(controller->s2 / S2_PER_CM));
 }
 
-/* DFS-style state machine for a two-choice junction. A double-white event is
-   latched so its multiple 10 ms samples cannot create duplicate stack entries. */
-static void trace_logic_tick(TraceController *controller,
+static void trace_enter_reverse(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now, const char *why)
+{
+    if (controller->rev_started == 0U) {
+        controller->rev_started = 1U;
+        controller->rev_budget_s2 = REV_BUDGET_S2;
+    }
+    controller->rev_prev_s2 = controller->s2;
+
+    controller->rev_guard_s2 = controller->s2 - REV_GUARD_S2;
+    controller->rev_cmd_left = -REV_SPEED;
+    controller->rev_cmd_right = -REV_SPEED;
+    controller->rev_dosing = 0U;
+    controller->rev_dose_lock = 0U;
+    controller->rev_luck = 0U;
+    controller->watch_active = 0U;
+    controller->watch_ww = 0U;
+    controller->bar_valid = 0U;
+    printf("[Trace v7.3] REVERSE (%s): backing out, budget %ld cm\r\n", why,
+        (long)(controller->rev_budget_s2 / S2_PER_CM));
+    ble_debug_printf("[Trace v7.3] REVERSE (%s)\r\n", why);
+    trace_enter_state(controller, TRACE_REVERSE, sensor, now);
+}
+
+static void trace_watch_arm(TraceController *controller, uint32_t now, const char *how)
+{
+    controller->watch_active = 1U;
+    controller->watch_seen_black = 0U;
+    controller->watch_trail_s2 = controller->s2;
+    controller->watch_last_white_s2 = controller->s2;
+    controller->watch_bar2 = 0U;
+    controller->watch_bar1 = 0U;
+    controller->watch_start_tick = now;
+    controller->bar_valid = 1U;
+    controller->bar_valid_s2 = controller->s2;
+    controller->side_recorded = 0U;
+    printf("[Trace v7.3] WATCH armed (%s) at s=%ld cm h=%ld deg\r\n", how,
+        (long)(controller->s2 / S2_PER_CM),
+        (long)(controller->theta / HEADING_PULSES_PER_DEG));
+    ble_debug_printf("[Trace v7.3] WATCH on (%s) s=%ld\r\n", how,
+        (long)(controller->s2 / S2_PER_CM));
+}
+
+static void trace_wiggle_arc_begin(TraceController *controller, uint32_t now)
+{
+    controller->wiggle_arc_theta = controller->theta;
+    controller->wiggle_arc_tick = now;
+}
+
+static void trace_enter_wiggle(TraceController *controller,
     const SensorSnapshot *sensor, uint32_t now)
 {
-    uint8_t lw = (uint8_t)(sensor->line_left != 0U);
-    uint8_t rw = (uint8_t)(sensor->line_right != 0U);
-    uint8_t both_white = (uint8_t)(lw != 0U && rw != 0U);
-    uint8_t both_black = (uint8_t)(lw == 0U && rw == 0U);
-    uint32_t dwell = (uint32_t)(now - controller->state_enter_tick);
+    controller->wiggle_arc = 0U;
+    trace_wiggle_arc_begin(controller, now);
+    printf("[Trace v7.3] WIGGLE: %ld cm silent, probing (%u x %d deg arcs)\r\n",
+        (long)(DEAD_SILENCE_S2 / S2_PER_CM), (unsigned int)WIGGLE_ARCS,
+        WIGGLE_ARC_DEG);
+    ble_debug_printf("[Trace v7.3] WIGGLE start\r\n");
+    trace_enter_state(controller, TRACE_WIGGLE, sensor, now);
+}
 
-    if (both_white == 0U) {
-        controller->junction_latched = 0U;
+static __attribute__((unused)) void trace_demo_tick(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    uint8_t both_white = (uint8_t)(sensor->line_left != 0U && sensor->line_right != 0U);
+    uint8_t followish = (uint8_t)(controller->state == TRACE_STRAIGHT ||
+        controller->state == TRACE_LEFT || controller->state == TRACE_RIGHT ||
+        controller->state == TRACE_SETTLE);
+    uint32_t elapsed;
+
+    if (controller->demo_pause_start != 0U) {
+
+        if ((uint32_t)(now - controller->demo_pause_start) < DEMO_PAUSE_TICKS) {
+            return;
+        }
+        controller->demo_pause_start = 0U;
+        printf("[TraceDemo] pause over, resume (s=%ld)\r\n",
+            (long)(controller->s2 / S2_PER_CM));
+        trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+        return;
+    }
+    if (controller->demo_script != 0) {
+
+        uint8_t outer_black = (uint8_t)(controller->demo_script > 0 ?
+            (sensor->line_right == 0U) : (sensor->line_left == 0U));
+        elapsed = (uint32_t)(now - controller->demo_script_tick);
+        if ((elapsed >= DEMO_ARC_MIN_TICKS && outer_black != 0U) ||
+            elapsed >= DEMO_ARC_TIMEOUT_TICKS) {
+            printf("[TraceDemo] scripted %s pivot done (%s, s=%ld L=%c R=%c)\r\n",
+                controller->demo_script > 0 ? "LEFT" : "RIGHT",
+                elapsed >= DEMO_ARC_TIMEOUT_TICKS ? "timeout" : "outer black",
+                (long)(controller->s2 / S2_PER_CM),
+                sensor->line_left != 0U ? 'w' : 'b',
+                sensor->line_right != 0U ? 'w' : 'b');
+            ble_debug_printf("[TraceDemo] pivot done\r\n");
+            controller->demo_script = 0;
+            controller->demo_rearm_s2 = controller->s2 + DEMO_REARM_S2;
+            controller->demo_pause_start = now;
+            printf("[TraceDemo] pause 3s -- look around (s=%ld)\r\n",
+                (long)(controller->s2 / S2_PER_CM));
+        }
+        return;
+    }
+    if (controller->demo_phase == DEMO_PH_REVERSE) {
+
+        int32_t backed = controller->demo_rev_s2 - controller->s2;
+
+        if (sensor->line_left != 0U && sensor->line_right == 0U) {
+            controller->demo_cmd_left = -DEMO_REV_SPEED;
+            controller->demo_cmd_right = (int16_t)(-(DEMO_REV_SPEED + DEMO_REV_DELTA));
+        } else if (sensor->line_right != 0U && sensor->line_left == 0U) {
+            controller->demo_cmd_left = (int16_t)(-(DEMO_REV_SPEED + DEMO_REV_DELTA));
+            controller->demo_cmd_right = -DEMO_REV_SPEED;
+        } else {
+            controller->demo_cmd_left = -DEMO_REV_SPEED;
+            controller->demo_cmd_right = -DEMO_REV_SPEED;
+        }
+        if (backed >= DEMO_REV_MAX_S2) {
+            printf("[TraceDemo] reverse cap %ld cm -- park (s=%ld)\r\n",
+                (long)(DEMO_REV_MAX_S2 / S2_PER_CM),
+                (long)(controller->s2 / S2_PER_CM));
+            ble_debug_printf("[TraceDemo] rev cap, park\r\n");
+            controller->demo_phase = DEMO_PH_DRIVE;
+            trace_enter_state(controller, TRACE_GOAL, sensor, now);
+            return;
+        }
+        if (controller->s2 <= controller->demo_entry_s2) {
+
+            controller->demo_return_dir = (controller->demo_entry_dir != 0) ?
+                -controller->demo_entry_dir : 1;
+            printf("[TraceDemo] entry path reversed (%ld cm): return pivot %s %ums fixed (s=%ld)\r\n",
+                (long)(backed / S2_PER_CM),
+                controller->demo_return_dir > 0 ? "LEFT" : "RIGHT",
+                (unsigned int)(DEMO_RETURN_TICKS * 10U),
+                (long)(controller->s2 / S2_PER_CM));
+            ble_debug_printf("[TraceDemo] return pivot\r\n");
+            controller->demo_phase = DEMO_PH_RETURN;
+            controller->demo_phase_tick = now;
+            return;
+        }
+        return;
+    }
+    if (controller->demo_phase == DEMO_PH_RETURN) {
+
+        elapsed = (uint32_t)(now - controller->demo_phase_tick);
+        if (elapsed >= DEMO_RETURN_TICKS) {
+            printf("[TraceDemo] return pivot %s done (%ums fixed): back on the main line, FOLLOW (s=%ld)\r\n",
+                controller->demo_return_dir > 0 ? "LEFT" : "RIGHT",
+                (unsigned int)(DEMO_RETURN_TICKS * 10U),
+                (long)(controller->s2 / S2_PER_CM));
+            ble_debug_printf("[TraceDemo] returned\r\n");
+            controller->demo_phase = DEMO_PH_DRIVE;
+            controller->demo_rearm_s2 = controller->s2 + DEMO_REARM_S2;
+            trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+        }
+        return;
     }
 
-    switch (controller->state) {
-        case TRACE_FOLLOW:
-            if (both_white != 0U && controller->junction_latched == 0U) {
-                if (controller->stack_depth >= TRACE_STACK_MAX) {
-                    printf("[Trace v6.3] DFS stack full; stopping\r\n");
-                    trace_enter_state(controller, TRACE_FAILED, sensor, now);
-                    break;
-                }
-                controller->junction_latched = 1U;
-                controller->stack[controller->stack_depth].tried_left = 1U;
-                controller->stack[controller->stack_depth].tried_right = 0U;
-                controller->stack_depth++;
-                controller->line_seen = 0U;
-                controller->double_black_ticks = 0U;
-                printf("[Trace v6.3] junction depth=%u: try left\r\n",
-                    controller->stack_depth);
-                trace_enter_state(controller, TRACE_TURN_LEFT, sensor, now);
-            } else if (both_black != 0U && controller->line_seen != 0U) {
-                controller->double_black_ticks++;
-                if (controller->double_black_ticks >= TRACE_DEAD_END_TICKS) {
-                    printf("[Trace v6.3] dead end; backtracking\r\n");
-                    controller->backtrack_junction_guard = 0U;
-                    trace_enter_state(controller, TRACE_BACKTRACK, sensor, now);
-                }
-            } else {
-                controller->double_black_ticks = 0U;
-                if (both_black == 0U) {
-                    controller->line_seen = 1U;
-                }
-            }
-            break;
+    if (controller->demo_bars == 1U &&
+        (uint32_t)(now - controller->demo_bar1_tick) >= DEMO_BAR_EXPIRE_TICKS) {
+        controller->demo_bars = 0U;
+        controller->demo_entry_dir = 0;
+        printf("[TraceDemo] bar #1 expired (60 s, no second bar) -- voided, next bar re-arms (s=%ld)\r\n",
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[TraceDemo] bar1 expired\r\n");
+    }
 
-        case TRACE_TURN_LEFT:
-            if (rw == 0U || dwell >= TURN_TIMEOUT_TICKS) {
-                controller->line_seen = 0U;
-                controller->double_black_ticks = 0U;
-                trace_enter_state(controller, TRACE_FOLLOW, sensor, now);
-            }
-            break;
+    if (controller->demo_bars == 1U && controller->demo_entry_dir == 0) {
+        if (controller->state == TRACE_LEFT) {
+            controller->demo_entry_dir = 1;
+        } else if (controller->state == TRACE_RIGHT) {
+            controller->demo_entry_dir = -1;
+        }
+        if (controller->demo_entry_dir != 0) {
+            printf("[TraceDemo] entry turn %s recorded (s=%ld)\r\n",
+                controller->demo_entry_dir > 0 ? "LEFT" : "RIGHT",
+                (long)(controller->s2 / S2_PER_CM));
+            ble_debug_printf("[TraceDemo] entry %s\r\n",
+                controller->demo_entry_dir > 0 ? "LEFT" : "RIGHT");
+        }
+    }
+    if (controller->s2 < controller->demo_rearm_s2) {
+        controller->demo_ww = 0U;
+        return;
+    }
+    if (followish == 0U) {
 
-        case TRACE_TURN_RIGHT:
-            if (lw == 0U || dwell >= TURN_TIMEOUT_TICKS) {
-                controller->line_seen = 0U;
-                controller->double_black_ticks = 0U;
-                trace_enter_state(controller, TRACE_FOLLOW, sensor, now);
-            }
-            break;
+        controller->demo_ww = 0U;
+        return;
+    }
+    if (both_white == 0U) {
+        controller->demo_ww = 0U;
+        return;
+    }
+    controller->demo_ww++;
+    if (controller->demo_ww < WATCH_CONFIRM_TICKS) {
+        return;
+    }
+    controller->demo_ww = 0U;
+    controller->demo_bars++;
+    if (controller->demo_bars == 1U) {
 
-        case TRACE_BACKTRACK:
-            if (dwell >= BACKTRACK_TIMEOUT_TICKS) {
-                printf("[Trace v6.3] BACKTRACK timeout; stopping\r\n");
-                trace_enter_state(controller, TRACE_FAILED, sensor, now);
-            } else if (both_white != 0U && controller->backtrack_junction_guard == 0U) {
-                if (controller->stack_depth == 0U) {
-                    trace_enter_state(controller, TRACE_FAILED, sensor, now);
+        controller->demo_entry_s2 = controller->s2;
+        controller->demo_bar1_tick = now;
+        controller->demo_entry_dir = 0;
+        controller->demo_rearm_s2 = controller->s2 + DEMO_REARM_S2;
+        printf("[TraceDemo] bar #1 => junction armed: FOLLOW on, first turn recorded, 60 s expiry (s=%ld)\r\n",
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[TraceDemo] bar1 armed\r\n");
+    } else if (controller->demo_bars == 2U) {
+
+        controller->demo_phase = DEMO_PH_REVERSE;
+        controller->demo_rev_s2 = controller->s2;
+        controller->demo_cmd_left = -DEMO_REV_SPEED;
+        controller->demo_cmd_right = -DEMO_REV_SPEED;
+        printf("[TraceDemo] bar #2 => dead end, reverse %ld cm (recorded) (s=%ld)\r\n",
+            (long)((controller->s2 - controller->demo_entry_s2) / S2_PER_CM),
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[TraceDemo] dead-end reverse\r\n");
+    } else if (controller->demo_bars == 3U) {
+
+        controller->demo_script = -1;
+        controller->demo_script_tick = now;
+        printf("[TraceDemo] bar #3 => scripted RIGHT pivot at fork 2 (s=%ld)\r\n",
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[TraceDemo] bar3 RIGHT\r\n");
+    } else {
+        printf("[TraceDemo] bar #%u => finish line, park (s=%ld)\r\n",
+            (unsigned int)controller->demo_bars,
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[TraceDemo] finish, park\r\n");
+        trace_enter_state(controller, TRACE_GOAL, sensor, now);
+    }
+}
+
+static void trace_bar_watch(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    uint8_t both_white = (uint8_t)(sensor->line_left != 0U && sensor->line_right != 0U);
+    uint8_t both_black = (uint8_t)(sensor->line_left == 0U && sensor->line_right == 0U);
+    uint8_t single = (uint8_t)(sensor->line_left != sensor->line_right);
+    uint8_t followish = (uint8_t)(controller->state == TRACE_STRAIGHT ||
+        controller->state == TRACE_LEFT || controller->state == TRACE_RIGHT ||
+        controller->state == TRACE_SETTLE);
+
+    if (TRACE_DEMO_SCRIPT != 0) {
+
+        trace_demo_tick(controller, sensor, now);
+        return;
+    }
+
+    if (followish == 0U) {
+
+        controller->watch_ww = 0U;
+        controller->w2_left_valid = 0U;
+        controller->w2_right_valid = 0U;
+        return;
+    }
+
+    if (controller->watch_active == 0U) {
+
+        if (controller->s2 < controller->bar_suppress_s2) {
+            controller->watch_ww = 0U;
+            return;
+        }
+
+        if (sensor->line_left != 0U) {
+            controller->w2_left_valid = 1U;
+            controller->w2_left_tick = now;
+            controller->w2_left_theta = controller->theta;
+        }
+        if (sensor->line_right != 0U) {
+            controller->w2_right_valid = 1U;
+            controller->w2_right_tick = now;
+            controller->w2_right_theta = controller->theta;
+        }
+        if (both_white != 0U) {
+            controller->watch_ww++;
+            if (controller->watch_ww >= WATCH_CONFIRM_TICKS) {
+                int32_t gap = controller->s2 - controller->bar_valid_s2;
+
+                if (controller->bar_valid != 0U &&
+                    gap >= (int32_t)BAR2_GUARD_S2 &&
+                    gap <= (int32_t)BAR2_WINDOW_S2) {
+                    printf("[Trace v7.3] second bar at +%ld cm of the arming => dead end\r\n",
+                        (long)(gap / S2_PER_CM));
+                    ble_debug_printf("[Trace v7.3] 2nd bar => REVERSE\r\n");
+                    trace_enter_reverse(controller, sensor, now, "second bar");
+                    return;
+                }
+                if (controller->bar_valid != 0U &&
+                    gap < (int32_t)BAR2_GUARD_S2) {
+
+                    controller->watch_ww = 0U;
                 } else {
-                    TraceJunction *junction = &controller->stack[controller->stack_depth - 1U];
-                    controller->backtrack_junction_guard = TRACE_BACKTRACK_JUNCTION_GUARD;
-                    if (junction->tried_right == 0U) {
-                        junction->tried_right = 1U;
-                        controller->line_seen = 0U;
-                        controller->double_black_ticks = 0U;
-                        printf("[Trace v6.3] junction depth=%u: try right\r\n",
-                            controller->stack_depth);
-                        trace_enter_state(controller, TRACE_TURN_RIGHT, sensor, now);
-                    } else {
-                        controller->stack_depth--;
-                        if (controller->stack_depth == 0U) {
-                            trace_enter_state(controller, TRACE_FAILED, sensor, now);
-                        }
-                    }
+                    trace_watch_arm(controller, now, "double white");
                 }
-            } else if (controller->backtrack_junction_guard != 0U && both_white == 0U) {
-                controller->backtrack_junction_guard--;
+            }
+        } else {
+            uint32_t latest;
+
+            controller->watch_ww = 0U;
+
+            latest = (controller->w2_left_tick >= controller->w2_right_tick)
+                ? controller->w2_left_tick : controller->w2_right_tick;
+            if (controller->w2_left_valid != 0U && controller->w2_right_valid != 0U &&
+                controller->w2_left_tick != controller->w2_right_tick &&
+                (uint32_t)(now - latest) <= W2_WINDOW_TICKS) {
+                uint32_t span;
+                int32_t dtheta;
+
+                span = (controller->w2_left_tick >= controller->w2_right_tick)
+                    ? (controller->w2_left_tick - controller->w2_right_tick)
+                    : (controller->w2_right_tick - controller->w2_left_tick);
+                dtheta = controller->w2_left_theta - controller->w2_right_theta;
+                if (dtheta < 0) {
+                    dtheta = -dtheta;
+                }
+                if (span <= W2_WINDOW_TICKS && dtheta <= W2_HEADING_GUARD) {
+                    trace_watch_arm(controller, now, "W2 seq white");
+                }
+            }
+        }
+        return;
+    }
+
+    if (both_white != 0U || single != 0U) {
+        controller->watch_last_white_s2 = controller->s2;
+    }
+    if (both_white != 0U && controller->watch_seen_black == 0U &&
+        controller->watch_bar1 < 255U) {
+        controller->watch_bar1++;
+    }
+    if (both_black != 0U && controller->watch_seen_black == 0U) {
+        controller->watch_seen_black = 1U;
+        controller->watch_trail_s2 = controller->s2;
+    }
+
+    if (controller->side_recorded == 0U && single != 0U) {
+        controller->branch_side = (sensor->line_left != 0U) ?
+            BRANCH_SIDE_LEFT : BRANCH_SIDE_RIGHT;
+        controller->side_recorded = 1U;
+        printf("[Trace v7.3] branch side %s (first white, s=%ld)\r\n",
+            controller->branch_side < 0 ? "RIGHT" : "LEFT",
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[Trace v7.3] branch %s\r\n",
+            controller->branch_side < 0 ? "R" : "L");
+
+        printf("[Trace v7.3] capture %s (commit)\r\n",
+            controller->branch_side < 0 ? "RIGHT" : "LEFT");
+        ble_debug_printf("[Trace v7.3] capture %s\r\n",
+            controller->branch_side < 0 ? "R" : "L");
+        trace_enter_state(controller, TRACE_CAPTURE, sensor, now);
+    }
+
+    if (both_white != 0U && controller->watch_seen_black != 0U) {
+        int32_t gap = controller->s2 - controller->watch_trail_s2;
+
+        controller->watch_bar2++;
+        if (controller->watch_bar2 >= WATCH_BAR2_TICKS) {
+            if (gap >= GOAL_GAP_MIN_S2 && gap <= GOAL_GAP_MAX_S2 &&
+                controller->watch_bar1 >= WATCH_BAR1_MIN_TICKS) {
+                printf("[Trace v7.3] GOAL: second bar at net gap %ld mm (bar1 %u ticks)\r\n",
+                    (long)(gap * 10L / S2_PER_CM), controller->watch_bar1);
+                ble_debug_printf("[Trace v7.3] GOAL! gap=%ldmm\r\n",
+                    (long)(gap * 10L / S2_PER_CM));
+                controller->watch_active = 0U;
+                trace_enter_state(controller, TRACE_GOAL, sensor, now);
+                return;
+            }
+            if (gap > GOAL_GAP_MAX_S2) {
+
+                controller->watch_seen_black = 0U;
+                controller->watch_trail_s2 = controller->s2;
+                controller->watch_bar2 = 0U;
+                controller->watch_bar1 = 0U;
+            }
+        }
+    } else {
+        controller->watch_bar2 = 0U;
+    }
+
+    if ((int32_t)(controller->s2 - controller->watch_last_white_s2) >= DEAD_SILENCE_S2) {
+        trace_enter_wiggle(controller, sensor, now);
+        return;
+    }
+
+    if ((uint32_t)(now - controller->watch_start_tick) >= WATCH_TIMEOUT_TICKS) {
+
+        printf("[Trace v7.3] WATCH timeout => disarm\r\n");
+        ble_debug_printf("[Trace v7.3] WATCH timeout\r\n");
+        controller->watch_active = 0U;
+        controller->watch_ww = 0U;
+    }
+}
+
+static void trace_wiggle_tick(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    uint8_t contact = (uint8_t)(sensor->line_left != 0U || sensor->line_right != 0U);
+    int32_t swing;
+    int32_t target;
+
+    if (contact != 0U) {
+        printf("[Trace v7.3] WIGGLE: contact => line alive, follow on\r\n");
+        ble_debug_printf("[Trace v7.3] WIGGLE: line alive\r\n");
+        controller->watch_active = 0U;
+        controller->watch_ww = 0U;
+        trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+        return;
+    }
+    swing = controller->theta - controller->wiggle_arc_theta;
+    if (swing < 0) {
+        swing = -swing;
+    }
+
+    target = DEG_TO_PULSES((controller->wiggle_arc == 0U ||
+        controller->wiggle_arc == WIGGLE_ARCS - 1U) ? WIGGLE_ARC_DEG :
+        2 * WIGGLE_ARC_DEG);
+    if (swing >= target ||
+        (uint32_t)(now - controller->wiggle_arc_tick) >= WIGGLE_ARC_TIMEOUT_TICKS) {
+        controller->wiggle_arc++;
+        if (controller->wiggle_arc >= WIGGLE_ARCS) {
+            printf("[Trace v7.3] WIGGLE: no contact => dead end\r\n");
+            ble_debug_printf("[Trace v7.3] WIGGLE: dead end\r\n");
+            trace_enter_reverse(controller, sensor, now, "dead end (wiggle)");
+            return;
+        }
+        trace_wiggle_arc_begin(controller, now);
+    }
+}
+
+static TraceState trace_target_state(const SensorSnapshot *sensor)
+{
+    if (sensor->line_left != 0U && sensor->line_right != 0U) {
+
+        return TRACE_STRAIGHT;
+    }
+    if (sensor->line_left != 0U) {
+        return TRACE_LEFT;
+    }
+    if (sensor->line_right != 0U) {
+        return TRACE_RIGHT;
+    }
+    return TRACE_STRAIGHT;
+}
+
+static void trace_follow_tick(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    TraceState target = trace_target_state(sensor);
+    uint32_t dwell = (uint32_t)(now - controller->state_enter_tick);
+
+    switch (controller->state) {
+        case TRACE_STRAIGHT:
+
+            if (target == TRACE_LEFT || target == TRACE_RIGHT) {
+                trace_enter_state(controller, target, sensor, now);
             }
             break;
 
-        case TRACE_FAILED:
+        case TRACE_LEFT:
+        case TRACE_RIGHT:
+            if (target == controller->state) {
+
+                if (dwell >= CORRECT_PULSE_TICKS) {
+                    trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+                }
+            } else if (target == TRACE_STRAIGHT) {
+                trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+            } else {
+                trace_enter_state(controller, target, sensor, now);
+            }
+            break;
+
+        case TRACE_SETTLE:
+            if (target == TRACE_LEFT || target == TRACE_RIGHT) {
+                trace_enter_state(controller, target, sensor, now);
+            } else if (dwell >= SETTLE_TICKS) {
+                trace_enter_state(controller, TRACE_STRAIGHT, sensor, now);
+            }
+            break;
+
+        case TRACE_CAPTURE:
+
+            {
+                uint8_t far_white = (controller->branch_side > 0) ?
+                    sensor->line_right : sensor->line_left;
+                uint8_t done = (uint8_t)(far_white != 0U ||
+                    (dwell >= CAPTURE_MIN_TICKS && target == TRACE_STRAIGHT) ||
+                    dwell >= CAPTURE_TIMEOUT_TICKS);
+
+                if (done != 0U) {
+                    controller->watch_last_white_s2 = controller->s2;
+                    printf("[Trace v7.3] capture done (%s, %lu ms)\r\n",
+                        far_white != 0U ? "far probe on tape" :
+                        target == TRACE_STRAIGHT ? "tape straddled" : "cap",
+                        (unsigned long)(dwell * 10U));
+                    ble_debug_printf("[Trace v7.3] capture done\r\n");
+                    trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+                }
+            }
+            break;
+
         default:
             break;
     }
+}
+
+static uint8_t rejoin_grammar_white(const TraceController *controller,
+    const SensorSnapshot *sensor)
+{
+
+    return (controller->branch_side > 0) ? sensor->line_right : sensor->line_left;
+}
+
+static void trace_rejoin_phase_begin(TraceController *controller, uint32_t phase)
+{
+    controller->rejoin_phase = phase;
+    controller->rejoin_edges = 0U;
+    controller->rejoin_theta = controller->theta;
+}
+
+static void trace_enter_rejoin(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    trace_rejoin_phase_begin(controller, REJOIN_PHASE_CONFIRM);
+    controller->rejoin_last = rejoin_grammar_white(controller, sensor);
+    printf("[Trace v7.3] REJOIN (%s branch): CONFIRM sweep at s=%ld h=%ld\r\n",
+        controller->branch_side > 0 ? "left" : "right",
+        (long)(controller->s2 / S2_PER_CM),
+        (long)(controller->theta / HEADING_PULSES_PER_DEG));
+    ble_debug_printf("[Trace v7.3] REJOIN confirm\r\n");
+    trace_enter_state(controller, TRACE_REJOIN, sensor, now);
+}
+
+static void trace_rejoin_park(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now, const char *why)
+{
+    printf("[Trace v7.3] REJOIN stuck (%s) => park\r\n", why);
+    ble_debug_printf("[Trace v7.3] REJOIN park (%s)\r\n", why);
+    trace_enter_state(controller, TRACE_GOAL, sensor, now);
+}
+
+static void trace_rejoin_tick(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    uint8_t grammar_white = rejoin_grammar_white(controller, sensor);
+    int32_t swing = controller->theta - controller->rejoin_theta;
+
+    if (swing < 0) {
+        swing = -swing;
+    }
+
+    if (grammar_white != controller->rejoin_last) {
+        controller->rejoin_last = grammar_white;
+        if (controller->rejoin_edges < 255U) {
+            controller->rejoin_edges++;
+        }
+        printf("[Trace v7.3] REJOIN edge #%lu: %s (h=%ld)\r\n",
+            (unsigned long)controller->rejoin_edges,
+            grammar_white != 0U ? "white" : "black",
+            (long)(controller->theta / HEADING_PULSES_PER_DEG));
+    }
+
+    switch (controller->rejoin_phase) {
+        case REJOIN_PHASE_CONFIRM:
+            if (controller->rejoin_edges >= 2U) {
+                printf("[Trace v7.3] REJOIN: second tape at %ld deg => fork, SWITCH\r\n",
+                    (long)(swing / HEADING_PULSES_PER_DEG));
+                ble_debug_printf("[Trace v7.3] REJOIN: fork, switch\r\n");
+                trace_rejoin_phase_begin(controller, REJOIN_PHASE_SWITCH);
+                return;
+            }
+            if (swing >= DEG_TO_PULSES(REJOIN_CONFIRM_DEG)) {
+                if (controller->rejoin_edges == 1U) {
+                    printf("[Trace v7.3] REJOIN: %ld deg silent => mid-branch, CENTER\r\n",
+                        (long)(swing / HEADING_PULSES_PER_DEG));
+                    ble_debug_printf("[Trace v7.3] REJOIN: mid-branch\r\n");
+                    trace_rejoin_phase_begin(controller, REJOIN_PHASE_CENTER);
+                } else {
+                    trace_rejoin_park(controller, sensor, now, "buried white");
+                }
+                return;
+            }
+            break;
+
+        case REJOIN_PHASE_SWITCH:
+            if (controller->rejoin_edges >= 3U) {
+                controller->bar_suppress_s2 = controller->s2 + BAR_SUPPRESS_S2;
+                controller->watch_active = 0U;
+                controller->watch_ww = 0U;
+                printf("[Trace v7.3] REJOIN: on the far arm, resume FOLLOW\r\n");
+                ble_debug_printf("[Trace v7.3] REJOIN done\r\n");
+                trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+                return;
+            }
+            if (swing >= DEG_TO_PULSES(REJOIN_SWITCH_DEG)) {
+                trace_rejoin_park(controller, sensor, now, "switch budget");
+                return;
+            }
+            break;
+
+        case REJOIN_PHASE_CENTER:
+            if (controller->rejoin_edges >= 2U) {
+                printf("[Trace v7.3] REJOIN: recentered, resume REVERSE\r\n");
+                ble_debug_printf("[Trace v7.3] REJOIN recentered\r\n");
+                trace_enter_reverse(controller, sensor, now, "rejoin recenter");
+
+                controller->rev_guard_s2 = controller->s2;
+                return;
+            }
+            if (swing >= DEG_TO_PULSES(REJOIN_CENTER_DEG)) {
+                trace_rejoin_park(controller, sensor, now, "center budget");
+                return;
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+static void trace_reverse_tick(TraceController *controller,
+    const SensorSnapshot *sensor, uint32_t now)
+{
+    int32_t step = controller->rev_prev_s2 - controller->s2;
+    uint8_t grammar_white = rejoin_grammar_white(controller, sensor);
+    uint8_t other_white = (controller->branch_side > 0) ?
+        sensor->line_left : sensor->line_right;
+    uint8_t past_guard = (uint8_t)(controller->s2 <= controller->rev_guard_s2);
+
+    if (step > 0) {
+        controller->rev_budget_s2 -= step;
+    }
+    controller->rev_prev_s2 = controller->s2;
+
+    if (controller->rev_budget_s2 <= 0) {
+        printf("[Trace v7.3] reverse budget exhausted => park\r\n");
+        ble_debug_printf("[Trace v7.3] budget out, park\r\n");
+        trace_enter_state(controller, TRACE_GOAL, sensor, now);
+        return;
+    }
+
+    if (other_white == 0U) {
+        controller->rev_dose_lock = 0U;
+    }
+
+    if (controller->rev_luck != 0U) {
+        if (grammar_white != other_white) {
+            controller->rev_luck = 0U;
+            printf("[Trace v7.3] luck: single white at s=%ld, FOLLOW\r\n",
+                (long)(controller->s2 / S2_PER_CM));
+            ble_debug_printf("[Trace v7.3] luck shot\r\n");
+            trace_enter_state(controller, TRACE_SETTLE, sensor, now);
+            return;
+        }
+        controller->rev_cmd_left = -REV_SPEED;
+        controller->rev_cmd_right = -REV_SPEED;
+        return;
+    }
+
+    if (controller->rev_dosing != 0U) {
+        int32_t dose_swing = controller->theta - controller->rev_dose_theta;
+
+        if (dose_swing < 0) {
+            dose_swing = -dose_swing;
+        }
+        if (other_white == 0U) {
+            controller->rev_dosing = 0U;
+        } else if (dose_swing >= DEG_TO_PULSES(REV_DOSE_DEG) ||
+            (uint32_t)(now - controller->rev_dose_tick) >= REV_DOSE_TIMEOUT_TICKS) {
+            controller->rev_dosing = 0U;
+            controller->rev_dose_lock = 1U;
+
+        } else if (grammar_white == 0U || past_guard == 0U) {
+            return;
+        } else {
+            controller->rev_dosing = 0U;
+        }
+    }
+
+    if (grammar_white != 0U && other_white != 0U && past_guard != 0U) {
+        controller->rev_luck = 1U;
+        controller->rev_dosing = 0U;
+        printf("[Trace v7.3] double white in REVERSE at s=%ld => luck path\r\n",
+            (long)(controller->s2 / S2_PER_CM));
+        ble_debug_printf("[Trace v7.3] luck path\r\n");
+        controller->rev_cmd_left = -REV_SPEED;
+        controller->rev_cmd_right = -REV_SPEED;
+        return;
+    }
+
+    if (grammar_white != 0U && other_white == 0U && past_guard != 0U) {
+        trace_enter_rejoin(controller, sensor, now);
+        return;
+    }
+
+    if (other_white != 0U && grammar_white == 0U && past_guard != 0U &&
+        controller->rev_dose_lock == 0U) {
+        controller->rev_dosing = 1U;
+        controller->rev_dose_dir = -controller->branch_side;
+        controller->rev_dose_theta = controller->theta;
+        controller->rev_dose_tick = now;
+        printf("[Trace v7.3] REV dose dir=%d at h=%ld\r\n",
+            controller->rev_dose_dir,
+            (long)(controller->theta / HEADING_PULSES_PER_DEG));
+        return;
+    }
+
+    controller->rev_cmd_left = -REV_SPEED;
+    controller->rev_cmd_right = -REV_SPEED;
 }
 
 static MotionCommand trace_motion_command(const TraceController *controller,
-    const SensorSnapshot *sensor)
+    uint32_t now)
 {
     MotionCommand command = {0, 0, 1U};
 
+    (void)now;
+    if (TRACE_DEMO_SCRIPT != 0 && controller->demo_pause_start != 0U) {
+        return command;
+    }
+    if (TRACE_DEMO_SCRIPT != 0 && controller->demo_phase == DEMO_PH_REVERSE) {
+        command.left = controller->demo_cmd_left;
+        command.right = controller->demo_cmd_right;
+        command.stop = 0U;
+        return command;
+    }
+    if (TRACE_DEMO_SCRIPT != 0 && controller->demo_phase == DEMO_PH_RETURN) {
+
+        command.left = (int16_t)(controller->demo_return_dir > 0 ?
+            DEMO_ARC_INNER : DEMO_ARC_OUTER);
+        command.right = (int16_t)(controller->demo_return_dir > 0 ?
+            DEMO_ARC_OUTER : DEMO_ARC_INNER);
+        command.stop = 0U;
+        return command;
+    }
+    if (TRACE_DEMO_SCRIPT != 0 && controller->demo_script != 0) {
+
+        command.left = (int16_t)(controller->demo_script > 0 ?
+            DEMO_ARC_INNER : DEMO_ARC_OUTER);
+        command.right = (int16_t)(controller->demo_script > 0 ?
+            DEMO_ARC_OUTER : DEMO_ARC_INNER);
+        command.stop = 0U;
+        return command;
+    }
     switch (controller->state) {
-        case TRACE_TURN_LEFT:
-            command.left = -TURN_SPEED;
-            command.right = TURN_SPEED;
+        case TRACE_STRAIGHT:
+            command.left = DRIVE_SPEED;
+            command.right = DRIVE_SPEED;
             command.stop = 0U;
             break;
 
-        case TRACE_TURN_RIGHT:
-            command.left = TURN_SPEED;
-            command.right = -TURN_SPEED;
+        case TRACE_LEFT:
+            command.left = CORRECT_INNER_SPEED;
+            command.right = CORRECT_OUTER_SPEED;
             command.stop = 0U;
             break;
 
-        case TRACE_BACKTRACK:
-            command.left = -BACKTRACK_SPEED;
-            command.right = -BACKTRACK_SPEED;
+        case TRACE_RIGHT:
+            command.left = CORRECT_OUTER_SPEED;
+            command.right = CORRECT_INNER_SPEED;
             command.stop = 0U;
             break;
 
-        case TRACE_FAILED:
+        case TRACE_SETTLE:
+            command.left = SETTLE_SPEED;
+            command.right = SETTLE_SPEED;
+            command.stop = 0U;
             break;
 
-        case TRACE_FOLLOW:
-        default:
-        {
-            uint8_t lw = (uint8_t)(sensor->line_left != 0U);
-            uint8_t rw = (uint8_t)(sensor->line_right != 0U);
+        case TRACE_WIGGLE:
 
-            if (lw != 0U && rw != 0U) {
-                /* double white: continue across a junction after the turn. */
-                command.left = DRIVE_SPEED;
-                command.right = DRIVE_SPEED;
-            } else if (lw != 0U) {
-                /* tape under left probe: steer left. */
-                command.left = CORRECT_INNER_SPEED;
-                command.right = CORRECT_OUTER_SPEED;
-            } else if (rw != 0U) {
-                /* tape under right probe: steer right. */
-                command.left = CORRECT_OUTER_SPEED;
-                command.right = CORRECT_INNER_SPEED;
+            command.left = (controller->wiggle_arc % 2U == 0U) ?
+                -WIGGLE_PIVOT_SPEED : WIGGLE_PIVOT_SPEED;
+            command.right = -command.left;
+            command.stop = 0U;
+            break;
+
+        case TRACE_REVERSE:
+            if (controller->rev_dosing != 0U) {
+
+                command.left = (int16_t)(-controller->rev_dose_dir * REV_DOSE_SPEED);
+                command.right = (int16_t)(controller->rev_dose_dir * REV_DOSE_SPEED);
             } else {
-                /* both probes on ground: straight. */
-                command.left = DRIVE_SPEED;
-                command.right = DRIVE_SPEED;
+                command.left = controller->rev_cmd_left;
+                command.right = controller->rev_cmd_right;
             }
             command.stop = 0U;
             break;
-        }
+
+        case TRACE_REJOIN:
+
+            {
+                int dir = (controller->rejoin_phase == REJOIN_PHASE_CONFIRM)
+                    ? controller->branch_side : -controller->branch_side;
+
+                command.left = (int16_t)(-dir * REJOIN_PIVOT_SPEED);
+                command.right = (int16_t)(dir * REJOIN_PIVOT_SPEED);
+            }
+            command.stop = 0U;
+            break;
+
+        case TRACE_CAPTURE:
+
+            command.left = (int16_t)(controller->branch_side > 0 ?
+                CAPTURE_INNER_SPEED : CAPTURE_OUTER_SPEED);
+            command.right = (int16_t)(controller->branch_side > 0 ?
+                CAPTURE_OUTER_SPEED : CAPTURE_INNER_SPEED);
+            command.stop = 0U;
+            break;
+
+        case TRACE_GOAL:
+        default:
+            break;
     }
     return command;
 }
@@ -808,22 +1670,48 @@ static uint8_t trace_sensor_is_fresh(const SensorSnapshot *sensor, uint32_t now)
 static void trace_control_thread(void *arg)
 {
     TraceController controller = {0};
+    uint8_t sensor_unavailable_logged = 0U;
     uint8_t stale_logged = 0U;
+    uint8_t reset_requested = 0U;
     uint32_t last_log_tick = 0U;
     uint32_t last_ble_tick = 0U;
+    uint32_t last_status_poll = 0U;
     uint32_t guard_start;
 
     (void)arg;
-    controller.state = TRACE_FOLLOW;
-    controller.state_enter_tick = hi_get_tick();
-    controller.double_black_ticks = 0U;
-    controller.line_seen = 0U;
+    controller.state = TRACE_STRAIGHT;
 
-    printf("[Trace v6.3] control started: motion=%d drive=%d correct=%d/%d turn=%d/%u dead_end=%u\r\n",
+    controller.branch_side = BRANCH_SIDE_RIGHT;
+
+    printf("[Trace v7.3] control started: motion=%d drive=%d correct=%d/%d pulse=%ums settle=%d/%u rev=%d goal_gap=[%ld,%ld]mm silent=%ldcm wiggle=%d/%udegx%u w2=%ums/%lddeg rejoin=%d/%u/%u/%udeg dose=%udeg@%d bar2=%ld-%ldcm capture=%d/%dx%ums\r\n",
         TRACE_ENABLE_MOTION, DRIVE_SPEED, CORRECT_INNER_SPEED, CORRECT_OUTER_SPEED,
-        TURN_SPEED, TURN_TIMEOUT_TICKS, TRACE_DEAD_END_TICKS);
-    ble_debug_printf("[Trace v6.3] control started: motion=%d drive=%d turn=%d\r\n",
-        TRACE_ENABLE_MOTION, DRIVE_SPEED, TURN_SPEED);
+        (unsigned int)(CORRECT_PULSE_TICKS * 10U), SETTLE_SPEED, SETTLE_TICKS,
+        REV_SPEED,
+        (long)(GOAL_GAP_MIN_S2 * 10L / S2_PER_CM),
+        (long)(GOAL_GAP_MAX_S2 * 10L / S2_PER_CM),
+        (long)(DEAD_SILENCE_S2 / S2_PER_CM),
+        WIGGLE_PIVOT_SPEED, (unsigned int)WIGGLE_ARC_DEG, (unsigned int)WIGGLE_ARCS,
+        (unsigned int)(W2_WINDOW_TICKS * 10U),
+        (long)(W2_HEADING_GUARD / HEADING_PULSES_PER_DEG),
+        REJOIN_PIVOT_SPEED, (unsigned int)REJOIN_CONFIRM_DEG,
+        (unsigned int)REJOIN_SWITCH_DEG, (unsigned int)REJOIN_CENTER_DEG,
+        (unsigned int)REV_DOSE_DEG, REV_DOSE_SPEED,
+        (long)(BAR2_GUARD_S2 / S2_PER_CM), (long)(BAR2_WINDOW_S2 / S2_PER_CM),
+        CAPTURE_INNER_SPEED, CAPTURE_OUTER_SPEED,
+        (unsigned int)(CAPTURE_MIN_TICKS * 10U));
+    ble_debug_printf("[Trace v7.3] control started: motion=%d drive=%d rev=%d wiggle=%d/%u rejoin=%d\r\n",
+        TRACE_ENABLE_MOTION, DRIVE_SPEED, REV_SPEED, WIGGLE_PIVOT_SPEED,
+        (unsigned int)WIGGLE_ARC_DEG, REJOIN_PIVOT_SPEED);
+    if (TRACE_DEMO_SCRIPT != 0) {
+        printf("[TraceDemo] scripted route v5.2: bar#1=>junction armed (FOLLOW on, first turn recorded, 60s expiry), bar#2=>reverse to anchor + return pivot OPPOSITE recorded turn 3s fixed, bar#3=>RIGHT at fork2, bar#4=>park; pivot=%d/%d min=%ums rearm=%ldcm pause=%ums rev=-%d/-%d\r\n",
+            DEMO_ARC_INNER, DEMO_ARC_OUTER,
+            (unsigned int)(DEMO_ARC_MIN_TICKS * 10U),
+            (long)(DEMO_REARM_S2 / S2_PER_CM),
+            (unsigned int)(DEMO_PAUSE_TICKS * 10U),
+            (int)DEMO_REV_SPEED, (int)(DEMO_REV_SPEED + DEMO_REV_DELTA));
+        ble_debug_printf("[TraceDemo] scripted route\r\n");
+    }
+    protocol_send_ping();
     protocol_send_stop();
 
     guard_start = hi_get_tick();
@@ -833,48 +1721,96 @@ static void trace_control_thread(void *arg)
     }
 
 #if !TRACE_ENABLE_MOTION
-    printf("[Trace v6.3] motion disabled; all commands are forced STOP\r\n");
-    ble_debug_printf("[Trace v6.3] motion disabled (safe build)\r\n");
+    printf("[Trace v7.3] motion disabled; all commands are forced STOP\r\n");
+    ble_debug_printf("[Trace v7.3] motion disabled (safe build)\r\n");
 #endif
 
     while (1) {
         SensorSnapshot sensor = sensor_take_snapshot();
+        StatusSnapshot status = status_take_snapshot();
         uint32_t now = hi_get_tick();
         MotionCommand command = {0, 0, 1U};
 
+        reckoning_update(&controller, &status);
+
+        if ((uint32_t)(now - last_status_poll) >= STATUS_POLL_TICKS) {
+            protocol_send_get_status();
+            last_status_poll = now;
+        }
+
         if (trace_sensor_is_fresh(&sensor, now) == 0U) {
-            if (stale_logged == 0U) {
-                printf("[Trace v6.3] sensor data unavailable or stale; motors stopped\r\n");
-                ble_debug_printf("[Trace v6.3] sensor stale; STOP\r\n");
+            if (reset_requested == 0U) {
+                sensor_request_reset();
+                reset_requested = 1U;
+            }
+            if (sensor_unavailable_logged == 0U) {
+                printf("[Trace v7.3] sensor data unavailable or stale; motors stopped\r\n");
+                ble_debug_printf("[Trace v7.3] sensor stale; STOP\r\n");
+                sensor_unavailable_logged = 1U;
+            }
+            if (sensor.sequence != 0U &&
+                (uint32_t)(now - sensor.updated_tick) > SENSOR_STALE_TICKS &&
+                stale_logged == 0U) {
+                printf("[Trace v7.3] sensor snapshot stale; forcing local STOP\r\n");
                 stale_logged = 1U;
             }
-            controller.state = TRACE_FOLLOW;
-            controller.state_enter_tick = now;
-            controller.double_black_ticks = 0U;
-            command = trace_motion_command(&controller, &sensor);
+            controller.watch_ww = 0U;
+            controller.w2_left_valid = 0U;
+            controller.w2_right_valid = 0U;
+            controller.rev_dosing = 0U;
+            controller.rev_dose_lock = 0U;
+            controller.rev_luck = 0U;
         } else {
+            reset_requested = 0U;
+            sensor_unavailable_logged = 0U;
             stale_logged = 0U;
-            trace_logic_tick(&controller, &sensor, now);
-            command = trace_motion_command(&controller, &sensor);
+
+            switch (controller.state) {
+                case TRACE_WIGGLE:
+                    trace_wiggle_tick(&controller, &sensor, now);
+                    break;
+                case TRACE_REVERSE:
+                    trace_reverse_tick(&controller, &sensor, now);
+                    break;
+                case TRACE_REJOIN:
+                    trace_rejoin_tick(&controller, &sensor, now);
+                    break;
+                case TRACE_GOAL:
+                    break;
+                default:
+                    trace_bar_watch(&controller, &sensor, now);
+                    if (controller.state != TRACE_GOAL &&
+                        controller.state != TRACE_REVERSE &&
+                        controller.state != TRACE_REJOIN &&
+                        controller.state != TRACE_WIGGLE) {
+                        trace_follow_tick(&controller, &sensor, now);
+                    }
+                    break;
+            }
+            command = trace_motion_command(&controller, now);
         }
 
         trace_send_command(&command, now);
         if ((uint32_t)(now - last_log_tick) >= STATUS_LOG_TICKS) {
-            printf("[Trace v6.3] st=%s L=%s R=%s cmd=%d/%d depth=%u ack=%lu/%lu\r\n",
+            printf("[Trace v7.3] st=%s L=%s R=%s cmd=%d/%d s=%ldcm h=%lddeg w=%d ack=%lu/%lu\r\n",
                 trace_state_name(controller.state),
                 sensor.line_left != 0U ? "white" : "black",
                 sensor.line_right != 0U ? "white" : "black",
                 command.left, command.right,
-                controller.stack_depth,
+                (long)(controller.s2 / S2_PER_CM),
+                (long)(controller.theta / HEADING_PULSES_PER_DEG),
+                controller.watch_active,
                 (unsigned long)link_ack_ok, (unsigned long)link_ack_bad);
             last_log_tick = now;
         }
         if ((uint32_t)(now - last_ble_tick) >= BLE_HEARTBEAT_TICKS) {
-            ble_debug_printf("[Trace v6.3] st=%s L=%s R=%s depth=%u\r\n",
+            ble_debug_printf("[Trace v7.3] st=%s L=%s R=%s s=%ld h=%ld w=%d\r\n",
                 trace_state_name(controller.state),
                 sensor.line_left != 0U ? "w" : "b",
                 sensor.line_right != 0U ? "w" : "b",
-                controller.stack_depth);
+                (long)(controller.s2 / S2_PER_CM),
+                (long)(controller.theta / HEADING_PULSES_PER_DEG),
+                controller.watch_active);
             last_ble_tick = now;
         }
         osDelay(CONTROL_LOOP_TICKS);
@@ -919,9 +1855,7 @@ static int trace_hardware_init(void)
         return -1;
     }
 #if TRACE_BLE_DEBUG
-    /* JDY-16 debug mirror on UART1 (GPIO0/1, 9600). peripheral_init() opened
-       UART1 @115200 at boot; drop that stale config once. Debug-only channel:
-       failure here must not kill the trace app. */
+
     {
         WifiIotUartAttribute ble_attr = {
             .baudRate = BLE_DEBUG_BAUD,
@@ -968,6 +1902,11 @@ static void TraceFollowingEntry(void)
         printf("[Trace] sensor mutex create failed\r\n");
         return;
     }
+    status_mutex = osMutexNew(NULL);
+    if (status_mutex == NULL) {
+        printf("[Trace] status mutex create failed\r\n");
+        return;
+    }
 
     if (trace_create_thread("TraceAck", (osThreadFunc_t)trace_ack_thread) != 0) {
         return;
@@ -979,8 +1918,8 @@ static void TraceFollowingEntry(void)
         return;
     }
 
-    printf("[Trace v6.3] ready: IR GPIO13/14, UART2 GPIO11/12 115200, BLE debug UART1 GPIO0/1 9600\r\n");
-    ble_debug_printf("[Trace v6.3] ready: BLE debug link up\r\n");
+    printf("[Trace v7.3] ready: IR GPIO13/14, UART2 GPIO11/12 115200 + GET_STATUS 10Hz, BLE debug UART1 GPIO0/1 9600\r\n");
+    ble_debug_printf("[Trace v7.3] ready: BLE debug link up\r\n");
 }
 
 APP_FEATURE_INIT(TraceFollowingEntry);

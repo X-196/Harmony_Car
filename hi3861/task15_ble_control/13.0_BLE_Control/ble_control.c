@@ -27,8 +27,7 @@
  *   JDY-16 的 "+CONNECTED"/"+DISCONNECTED" 状态行整行吞掉：
  *   断连自动停车，状态串不再被误解析成按键命令。
  *
- * STM32 端继续使用任务24的 V2 10字节协议（本改动不涉及 STM32）：
- * FC | 02 | 0A | 左轮int16 LE | 右轮int16 LE | seq | XOR | FD
+ * STM32 端使用任务24的 AA 协议（0xAA|CMD|LEN|PAYLOAD|CHECK），本改动不涉及 STM32。
  */
 #include <stdio.h>
 #include <unistd.h>
@@ -50,7 +49,6 @@
 static int speed_level = 100;
 static volatile int target_left = 0;
 static volatile int target_right = 0;
-static volatile uint8_t tx_seq = 0;
 static hi_u64 run_deadline_us = 0;      /* 定时命令的停车时刻；0=持续到 o */
 
 /* 软件 UART TX：空闲高，起始位低，8位数据LSB first，停止位高。 */
@@ -71,7 +69,7 @@ static void softuart_tx_byte(uint8_t value)
 
 static void stm32_send_frame(int left, int right)
 {
-    uint8_t frame[10];
+    uint8_t frame[8];
     uint8_t checksum;
     unsigned int i;
 
@@ -80,21 +78,18 @@ static void stm32_send_frame(int left, int right)
     if (right > 150) right = 150;
     if (right < -150) right = -150;
 
-    frame[0] = 0xFC;
-    frame[1] = 0x02;
-    frame[2] = 0x0A;
+    frame[0] = 0xAA;                                  /* SOF */
+    frame[1] = 0x01;                                  /* CMD SET_SPEED */
+    frame[2] = 0x04;                                  /* LEN */
     frame[3] = (uint8_t)(left & 0xFF);
     frame[4] = (uint8_t)((left >> 8) & 0xFF);
     frame[5] = (uint8_t)(right & 0xFF);
     frame[6] = (uint8_t)((right >> 8) & 0xFF);
-    frame[7] = tx_seq++;
-    checksum = frame[1] ^ frame[2] ^ frame[3] ^ frame[4] ^
-               frame[5] ^ frame[6] ^ frame[7];
-    frame[8] = checksum;
-    frame[9] = 0xFD;
+    checksum = (uint8_t)(0x01 + 0x04 + frame[3] + frame[4] + frame[5] + frame[6]);
+    frame[7] = checksum;
 
     /* 一帧约 10ms；期间到达的蓝牙字节由 UART1 硬件 FIFO 暂存，发完再读。 */
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 8; i++) {
         softuart_tx_byte(frame[i]);
     }
 }

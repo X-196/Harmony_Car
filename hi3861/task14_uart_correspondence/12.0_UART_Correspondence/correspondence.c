@@ -1,9 +1,9 @@
 /*
  * 任务24：系统通信协议（双核综合）——桌面巡逻模式
  *
- * Hi3861（主核）通过 UART2（GPIO_11=TXD / GPIO_12=RXD，115200-8-N-1）
- * 向 STM32（从核）发送 V2 10 字节运动控制帧：
- *   0xFC | 0x02 | 0x0A | 左轮int16(×100) | 右轮int16(×100) | 序号 | XOR | 0xFD
+ * Hi3861（主核）通过 UART2（GPIO_11=TXD / GPIO_12=RXD，9600-8-N-1）
+ * 向 STM32（从核）发送 AA 运动控制帧：
+ *   0xAA | 0x01(SET_SPEED) | 0x04 | 左轮int16(×100) | 右轮int16(×100) | CHECK
  *
  * 本模式：小车在桌面上自主巡逻，不会掉下桌子，并避让周围障碍物。
  *   - 防跌落：TCRT5000 红外对管朝下探桌沿（GPIO_13=左 / GPIO_14=右），
@@ -46,29 +46,26 @@ uint8_t uart_sendbuf[20];
 */
 void stm32motor_control(int motorA, int motorB)
 {
-    static uint8_t seq = 0;
     uint8_t checksum;
 
-    // V2 直接传有符号速度，范围 -150~150（单位：0.01圈/s）
+    // AA 帧：SET_SPEED(0x01), LEN=4, 左int16LE|右int16LE, CHECK=(CMD+LEN+ΣPAYLOAD)&0xFF
     if (motorA > 150) motorA = 150;
     if (motorA < -150) motorA = -150;
     if (motorB > 150) motorB = 150;
     if (motorB < -150) motorB = -150;
 
-    // V2: FC | version | length | left int16 LE | right int16 LE | seq | xor | FD
-    uart_sendbuf[0] = 0xFC;
-    uart_sendbuf[1] = 0x02;
-    uart_sendbuf[2] = 0x0A;
+    uart_sendbuf[0] = 0xAA;                                  // SOF
+    uart_sendbuf[1] = 0x01;                                  // CMD SET_SPEED
+    uart_sendbuf[2] = 0x04;                                  // LEN
     uart_sendbuf[3] = (uint8_t)(motorA & 0xFF);
     uart_sendbuf[4] = (uint8_t)((motorA >> 8) & 0xFF);
     uart_sendbuf[5] = (uint8_t)(motorB & 0xFF);
     uart_sendbuf[6] = (uint8_t)((motorB >> 8) & 0xFF);
-    uart_sendbuf[7] = seq++;
-    checksum = uart_sendbuf[1] ^ uart_sendbuf[2] ^ uart_sendbuf[3] ^
-               uart_sendbuf[4] ^ uart_sendbuf[5] ^ uart_sendbuf[6] ^ uart_sendbuf[7];
-    uart_sendbuf[8] = checksum;
-    uart_sendbuf[9] = 0xFD;
-    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 10);
+    checksum = (uint8_t)(0x01 + 0x04 + uart_sendbuf[3] + uart_sendbuf[4] +
+                         uart_sendbuf[5] + uart_sendbuf[6]);
+    uart_sendbuf[7] = checksum;
+
+    UartWrite(WIFI_IOT_UART_IDX_2, (unsigned char *)uart_sendbuf, 8);
 }
 
 // 小车前进（巡逻巡航 0.6 圈/s ≈ 8.5cm/s，低速保证桌沿检测余量）
@@ -351,8 +348,8 @@ static void correspondence(void)
 
     /***************串口参数******************/
     WifiIotUartAttribute uart_attr2 = {
-        // 波特率: 115200
-        .baudRate = 115200,
+        // 波特率: 9600（与 STM32 任务24 双核协议一致, 前为 115200 不配对）
+        .baudRate = 9600,
         // 数据位: 8bits
         .dataBits = 8,
         .stopBits = 1,
