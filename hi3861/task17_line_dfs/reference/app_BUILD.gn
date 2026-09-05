@@ -1,0 +1,19 @@
+lite_component("app") {
+    features = [
+        #"1.0_Hello_World:hello_world",
+        #"2.0_TCRT_Timer:TCRT",
+        #"3.0_SG90_Mutex:SG90",
+        #"4.0_Hcsr04_Tick:Hcsr04",
+        #"5.0_Uart_BLE:Uart",
+        #"6.0_Sum_Experiment_First:Sum_Experiment_First",
+        #"7.0_I2c_Ssd1306:I2c_Ssd1306",
+        #"8.0_Sht20:Sht20",
+        #"9.0_Ap3216c:Ap3216c",
+        #"10.0_WIFI_Connect:WIFI",
+        #"11.0_Sum_Experiment_Second:QST_car_xxx",
+        #"12.0_UART_Correspondence:correspondence",
+        #"13.0_BLE_Control:ble_control",
+        #"14.0_Maze_Patrol:maze_patrol",
+        "15.0_Line_DFS:line_dfs",
+    ]
+}
